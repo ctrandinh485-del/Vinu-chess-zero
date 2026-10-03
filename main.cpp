@@ -294,28 +294,22 @@ void undoMove(const Move& m, int savedTargetPiece) {
     }
 }
 
-// === MOVE ORDERING (MVV-LVA) ===
 void scoreMoves(vector<Move>& moves, const Move* pvMove = nullptr) {
     for (auto& m : moves) {
         m.score = 0;
-        // Ưu tiên cao nhất cho nước đi tốt nhất từ Depth trước (Principal Variation)
         if (pvMove && m.fromR == pvMove->fromR && m.fromC == pvMove->fromC && m.toR == pvMove->toR && m.toC == pvMove->toC) {
             m.score = 20000;
             continue;
         }
         int attacker = abs(board[m.fromR][m.fromC]);
         int victim = abs(board[m.toR][m.toC]);
-        
-        // MVV-LVA: Nước ăn quân (Lấy điểm nạn nhân x10 - điểm kẻ tấn công)
         if (victim != 0) {
             m.score = 10000 + (pieceValues[victim] * 10) - pieceValues[attacker];
         }
-        // Phong cấp
         if (m.promo != 0) {
             m.score += 9000;
         }
     }
-    // Sắp xếp các nước đi có điểm cao nhất lên đầu
     sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
         return a.score > b.score;
     });
@@ -353,8 +347,39 @@ int evaluateBoard() {
     return score;
 }
 
+int quiescenceSearch(bool isMaximizing, int alpha, int beta) {
+    int standPat = evaluateBoard();
+    if (isMaximizing) {
+        if (standPat >= beta) return beta;
+        if (alpha < standPat) alpha = standPat;
+    } else {
+        if (standPat <= alpha) return alpha;
+        if (beta > standPat) beta = standPat;
+    }
+
+    vector<Move> moves = getLegalMoves(isMaximizing);
+    for (const auto& move : moves) {
+        if (board[move.toR][move.toC] == 0 && move.promo == 0 && !move.isEnPassant) continue;
+
+        int savedPiece;
+        makeMove(move, savedPiece);
+        int score = quiescenceSearch(!isMaximizing, alpha, beta);
+        undoMove(move, savedPiece);
+
+        if (isMaximizing) {
+            if (score >= beta) return beta;
+            if (score > alpha) alpha = score;
+        } else {
+            if (score <= alpha) return alpha;
+            if (score < beta) beta = score;
+        }
+    }
+    return isMaximizing ? alpha : beta;
+}
+
 int minimax(int depth, bool isMaximizing, int alpha, int beta) {
-    if (depth == 0) return evaluateBoard();
+    if (depth == 0) return quiescenceSearch(isMaximizing, alpha, beta);
+
     vector<Move> moves = getLegalMoves(isMaximizing);
     if (moves.empty()) {
         if (isInCheck(isMaximizing)) return isMaximizing ? -90000 : 90000;
@@ -370,7 +395,7 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             undoMove(move, savedPiece);
             maxEval = max(maxEval, eval);
             alpha = max(alpha, eval);
-            if (beta <= alpha) break; // Cắt tỉa Alpha-Beta
+            if (beta <= alpha) break;
         }
         return maxEval;
     } else {
@@ -382,13 +407,12 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             undoMove(move, savedPiece);
             minEval = min(minEval, eval);
             beta = min(beta, eval);
-            if (beta <= alpha) break; // Cắt tỉa Alpha-Beta
+            if (beta <= alpha) break;
         }
         return minEval;
     }
 }
 
-// === ITERATIVE DEEPENING SEARCH ===
 Move getBestMoveIterative(bool isWhite, int maxDepth) {
     Move bestMove = {-1, -1, -1, -1};
     
@@ -451,7 +475,7 @@ void updateCastlingAndEnPassantFlags(const Move& m, bool isWhite) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v1.5 (MOVE ORDERING & ITERATIVE DEEPENING) ===\n";
+    cout << "=== VINU CHESS ZERO v1.6 (INTEGRATED QUIESCENCE SEARCH) ===\n";
     printBoard();
 
     string input;
@@ -491,8 +515,7 @@ int main() {
 
         printBoard();
 
-        cout << "\nAI (Den) dang suy nghi (Depth 5)...\n";
-        // Tăng thẳng lên Depth 5 nhờ Move Ordering + Iterative Deepening
+        cout << "\nAI (Den) dang suy nghi (Depth 5 + Quiescence Search)...\n";
         Move aiMove = getBestMoveIterative(false, 5);
         if (aiMove.fromR == -1) {
             cout << "AI khong con nuoc di hop le! TRO CHOI KET THUC.\n";
