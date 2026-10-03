@@ -11,7 +11,6 @@ struct Move {
     int toR, toC;
 };
 
-// Đã sửa lại đúng thứ tự chuẩn cờ vua: Xe(2), Mã(3), Tượng(4), Hậu(5), Vua(6), Tượng(4), Mã(3), Xe(2)
 int board[8][8] = {
     {-2, -3, -4, -5, -6, -4, -3, -2},
     {-1, -1, -1, -1, -1, -1, -1, -1},
@@ -60,7 +59,8 @@ bool isValid(int r, int c) {
     return r >= 0 && r < 8 && c >= 0 && c < 8;
 }
 
-vector<Move> getAllMoves(bool isWhite) {
+// Sinh tất cả nước đi thô (Pseudo-legal moves)
+vector<Move> getPseudoMoves(bool isWhite) {
     vector<Move> moves;
     for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++) {
@@ -72,16 +72,13 @@ vector<Move> getAllMoves(bool isWhite) {
                     int startRow = isWhite ? 6 : 1;
                     int nr = r + dir;
                     
-                    // Tiến 1 ô
                     if (isValid(nr, c) && board[nr][c] == 0) {
                         moves.push_back(Move{r, c, nr, c});
-                        // Tiến 2 ô nếu ở hàng xuất phát
                         int nr2 = r + 2 * dir;
                         if (r == startRow && board[nr2][c] == 0) {
                             moves.push_back(Move{r, c, nr2, c});
                         }
                     }
-                    // Ăn chéo
                     for (int dc : {-1, 1}) {
                         int nc = c + dc;
                         if (isValid(nr, nc)) {
@@ -134,6 +131,46 @@ vector<Move> getAllMoves(bool isWhite) {
     return moves;
 }
 
+// Kiểm tra Vua của phe isWhite có đang bị chiếu không
+bool isInCheck(bool isWhite) {
+    int kingR = -1, kingC = -1;
+    int targetKing = isWhite ? 6 : -6;
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 8; c++) {
+            if (board[r][c] == targetKing) {
+                kingR = r; kingC = c;
+                break;
+            }
+        }
+    }
+    if (kingR == -1) return true; // Vua đã bị ăn
+
+    vector<Move> enemyMoves = getPseudoMoves(!isWhite);
+    for (const auto& m : enemyMoves) {
+        if (m.toR == kingR && m.toC == kingC) return true;
+    }
+    return false;
+}
+
+// Lọc chỉ lấy các nước đi hợp lệ (không bị chiếu Vua sau khi đi)
+vector<Move> getLegalMoves(bool isWhite) {
+    vector<Move> pseudo = getPseudoMoves(isWhite);
+    vector<Move> legal;
+    for (const auto& m : pseudo) {
+        int temp = board[m.toR][m.toC];
+        board[m.toR][m.toC] = board[m.fromR][m.fromC];
+        board[m.fromR][m.fromC] = 0;
+
+        if (!isInCheck(isWhite)) {
+            legal.push_back(m);
+        }
+
+        board[m.fromR][m.fromC] = board[m.toR][m.toC];
+        board[m.toR][m.toC] = temp;
+    }
+    return legal;
+}
+
 int evaluateBoard() {
     int score = 0;
     int values[] = {0, 100, 500, 320, 330, 900, 20000};
@@ -149,8 +186,11 @@ int evaluateBoard() {
 
 int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     if (depth == 0) return evaluateBoard();
-    vector<Move> moves = getAllMoves(isMaximizing);
-    if (moves.empty()) return evaluateBoard();
+    vector<Move> moves = getLegalMoves(isMaximizing);
+    if (moves.empty()) {
+        if (isInCheck(isMaximizing)) return isMaximizing ? -90000 : 90000; // Chiếu hết
+        return 0; // Hòa cờ (Stalemate)
+    }
 
     if (isMaximizing) {
         int maxEval = -99999;
@@ -184,7 +224,8 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
 }
 
 Move getBestMove(bool isWhite, int depth) {
-    vector<Move> moves = getAllMoves(isWhite);
+    vector<Move> moves = getLegalMoves(isWhite);
+    if (moves.empty()) return Move{-1, -1, -1, -1};
     Move bestMove = moves[0];
     int bestValue = isWhite ? -99999 : 99999;
 
@@ -219,16 +260,17 @@ string toAlgebraic(int r, int c) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v1.1 ===\n";
+    cout << "=== VINU CHESS ZERO v1.2 ===\n";
     printBoard();
 
     string input;
     while (true) {
+        if (isInCheck(true)) cout << "[CANH BAO] Vua Trang dang bi chieu!\n";
         cout << "Nuoc di cua ban (vd: e2e4) hoac \"quit\": ";
         cin >> input;
         if (input == "quit") break;
         if (input.length() != 4) {
-            cout << "Nuoc di khong hop le! Thu lai.\n";
+            cout << "Cu phap khong hop le! Thu lai.\n";
             continue;
         }
 
@@ -237,6 +279,20 @@ int main() {
         int toC = input[2] - 'a';
         int toR = 8 - (input[3] - '0');
 
+        vector<Move> legal = getLegalMoves(true);
+        bool isValidMove = false;
+        for (const auto& m : legal) {
+            if (m.fromR == fromR && m.fromC == fromC && m.toR == toR && m.toC == toC) {
+                isValidMove = true;
+                break;
+            }
+        }
+
+        if (!isValidMove) {
+            cout << "Nuoc di KHONG HOP LE (pham luat hoac de Vua bi chieu)! Thu lai.\n";
+            continue;
+        }
+
         board[toR][toC] = board[fromR][fromC];
         board[fromR][fromC] = 0;
 
@@ -244,6 +300,10 @@ int main() {
 
         cout << "\nAI (Den) dang suy nghi...\n";
         Move aiMove = getBestMove(false, 3);
+        if (aiMove.fromR == -1) {
+            cout << "AI khong con nuoc đi hop le! TRO CHOI KET THUC.\n";
+            break;
+        }
         cout << "AI chon nuoc di: " << toAlgebraic(aiMove.fromR, aiMove.fromC) 
              << " -> " << toAlgebraic(aiMove.toR, aiMove.toC) << "\n";
 
