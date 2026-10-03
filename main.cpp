@@ -9,23 +9,23 @@ using namespace std;
 struct Move {
     int fromR, fromC;
     int toR, toC;
-    int promo = 0;      // Quân phong cấp (5 = Queen)
+    int promo = 0;      // 5 = Queen
     bool isCastling = false;
     bool isEnPassant = false;
 };
 
+// Sửa lại vị trí Hậu (5) ở cột d (index 3) và Vua (6) ở cột e (index 4)
 int board[8][8] = {
-    {-2, -3, -4, -5, -6, -4, -3, -2},
+    {-2, -3, -4, -5, -6, -4, -3, -2}, // -5 là q (Hậu đen), -6 là k (Vua đen)
     {-1, -1, -1, -1, -1, -1, -1, -1},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 1,  1,  1,  1,  1,  1,  1,  1},
-    { 2,  3,  4,  5,  6,  4,  3,  2}
+    { 2,  3,  4,  5,  6,  4,  3,  2}  // 5 là Q (Hậu trắng), 6 là K (Vua trắng)
 };
 
-// Trạng thái cho Nhập thành & Bắt tốt qua đường
 bool whiteKingMoved = false, whiteRookKingMoved = false, whiteRookQueenMoved = false;
 bool blackKingMoved = false, blackRookKingMoved = false, blackRookQueenMoved = false;
 int enPassantTargetR = -1, enPassantTargetC = -1;
@@ -39,7 +39,6 @@ int bishopDc[4] = {-1, 1, -1, 1};
 int kingDr[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
 int kingDc[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
 
-// Piece-Square Tables (Đánh giá vị trí quân cờ)
 int pawnPST[8][8] = {
     { 0,  0,  0,  0,  0,  0,  0,  0},
     {50, 50, 50, 50, 50, 50, 50, 50},
@@ -90,6 +89,61 @@ bool isValid(int r, int c) {
     return r >= 0 && r < 8 && c >= 0 && c < 8;
 }
 
+bool isSquareAttacked(int r, int c, bool attackedByWhite) {
+    for (int nr = 0; nr < 8; nr++) {
+        for (int nc = 0; nc < 8; nc++) {
+            int p = board[nr][nc];
+            if ((attackedByWhite && p > 0) || (!attackedByWhite && p < 0)) {
+                int piece = abs(p);
+                if (piece == 1) {
+                    int dir = attackedByWhite ? -1 : 1;
+                    if (nr + dir == r && (nc - 1 == c || nc + 1 == c)) return true;
+                } else if (piece == 3) {
+                    for (int i = 0; i < 8; i++) {
+                        if (nr + knightDr[i] == r && nc + knightDc[i] == c) return true;
+                    }
+                } else if (piece == 2 || piece == 4 || piece == 5) {
+                    vector<int> dr, dc;
+                    if (piece == 2) { dr.assign(rookDr, rookDr+4); dc.assign(rookDc, rookDc+4); }
+                    else if (piece == 4) { dr.assign(bishopDr, bishopDr+4); dc.assign(bishopDc, bishopDc+4); }
+                    else {
+                        dr.assign(rookDr, rookDr+4); dr.insert(dr.end(), bishopDr, bishopDr+4);
+                        dc.assign(rookDc, rookDc+4); dc.insert(dc.end(), bishopDc, bishopDc+4);
+                    }
+                    for (size_t i = 0; i < dr.size(); i++) {
+                        int tr = nr + dr[i], tc = nc + dc[i];
+                        while (isValid(tr, tc)) {
+                            if (tr == r && tc == c) return true;
+                            if (board[tr][tc] != 0) break;
+                            tr += dr[i]; tc += dc[i];
+                        }
+                    }
+                } else if (piece == 6) {
+                    for (int i = 0; i < 8; i++) {
+                        if (nr + kingDr[i] == r && nc + kingDc[i] == c) return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool isInCheck(bool isWhite) {
+    int kingR = -1, kingC = -1;
+    int targetKing = isWhite ? 6 : -6;
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 8; c++) {
+            if (board[r][c] == targetKing) {
+                kingR = r; kingC = c;
+                break;
+            }
+        }
+    }
+    if (kingR == -1) return true;
+    return isSquareAttacked(kingR, kingC, !isWhite);
+}
+
 vector<Move> getPseudoMoves(bool isWhite) {
     vector<Move> moves;
     for (int r = 0; r < 8; r++) {
@@ -105,7 +159,7 @@ vector<Move> getPseudoMoves(bool isWhite) {
                     
                     if (isValid(nr, c) && board[nr][c] == 0) {
                         if (nr == promoRow) {
-                            moves.push_back(Move{r, c, nr, c, isWhite ? 5 : -5}); // Phong Hậu
+                            moves.push_back(Move{r, c, nr, c, isWhite ? 5 : -5});
                         } else {
                             moves.push_back(Move{r, c, nr, c});
                             int nr2 = r + 2 * dir;
@@ -124,7 +178,6 @@ vector<Move> getPseudoMoves(bool isWhite) {
                                     moves.push_back(Move{r, c, nr, nc});
                                 }
                             }
-                            // Bắt Tốt qua đường (En Passant)
                             if (nr == enPassantTargetR && nc == enPassantTargetC) {
                                 moves.push_back(Move{r, c, nr, nc, 0, false, true});
                             }
@@ -159,7 +212,7 @@ vector<Move> getPseudoMoves(bool isWhite) {
                             nr += dr[i]; nc += dc[i];
                         }
                     }
-                } else if (pieceType == 6) { // Vua
+                } else if (pieceType == 6) { // Vua (Vua ở cột e - index 4)
                     for (int i = 0; i < 8; i++) {
                         int nr = r + kingDr[i], nc = c + kingDc[i];
                         if (isValid(nr, nc)) {
@@ -167,43 +220,33 @@ vector<Move> getPseudoMoves(bool isWhite) {
                                 moves.push_back(Move{r, c, nr, nc});
                         }
                     }
-                    // Nhập thành (Castling)
-                    if (isWhite && !whiteKingMoved && r == 7 && c == 3) {
-                        if (!whiteRookKingMoved && board[7][0] == 2 && board[7][1] == 0 && board[7][2] == 0)
-                            moves.push_back(Move{7, 3, 7, 1, 0, true});
-                        if (!whiteRookQueenMoved && board[7][7] == 2 && board[7][4] == 0 && board[7][5] == 0 && board[7][6] == 0)
-                            moves.push_back(Move{7, 3, 7, 5, 0, true});
-                    } else if (!isWhite && !blackKingMoved && r == 0 && c == 3) {
-                        if (!blackRookKingMoved && board[0][0] == -2 && board[0][1] == 0 && board[0][2] == 0)
-                            moves.push_back(Move{0, 3, 0, 1, 0, true});
-                        if (!blackRookQueenMoved && board[0][7] == -2 && board[0][4] == 0 && board[0][5] == 0 && board[0][6] == 0)
-                            moves.push_back(Move{0, 3, 0, 5, 0, true});
+                    // Nhập thành chuẩn: Vua ở cột e (4), không bị chiếu, không đi qua ô bị chiếu
+                    if (isWhite && !whiteKingMoved && r == 7 && c == 4 && !isInCheck(true)) {
+                        // Nhập thành cánh Vua (O-O) -> Vua sang g8 (col 6), Xe từ h8 (col 7) sang f8 (col 5)
+                        if (!whiteRookKingMoved && board[7][7] == 2 && board[7][5] == 0 && board[7][6] == 0) {
+                            if (!isSquareAttacked(7, 5, false) && !isSquareAttacked(7, 6, false))
+                                moves.push_back(Move{7, 4, 7, 6, 0, true});
+                        }
+                        // Nhập thành cánh Hậu (O-O-O) -> Vua sang c8 (col 2), Xe từ a8 (col 0) sang d8 (col 3)
+                        if (!whiteRookQueenMoved && board[7][0] == 2 && board[7][1] == 0 && board[7][2] == 0 && board[7][3] == 0) {
+                            if (!isSquareAttacked(7, 3, false) && !isSquareAttacked(7, 2, false))
+                                moves.push_back(Move{7, 4, 7, 2, 0, true});
+                        }
+                    } else if (!isWhite && !blackKingMoved && r == 0 && c == 4 && !isInCheck(false)) {
+                        if (!blackRookKingMoved && board[0][7] == -2 && board[0][5] == 0 && board[0][6] == 0) {
+                            if (!isSquareAttacked(0, 5, true) && !isSquareAttacked(0, 6, true))
+                                moves.push_back(Move{0, 4, 0, 6, 0, true});
+                        }
+                        if (!blackRookQueenMoved && board[0][0] == -2 && board[0][1] == 0 && board[0][2] == 0 && board[0][3] == 0) {
+                            if (!isSquareAttacked(0, 3, true) && !isSquareAttacked(0, 2, true))
+                                moves.push_back(Move{0, 4, 0, 2, 0, true});
+                        }
                     }
                 }
             }
         }
     }
     return moves;
-}
-
-bool isInCheck(bool isWhite) {
-    int kingR = -1, kingC = -1;
-    int targetKing = isWhite ? 6 : -6;
-    for (int r = 0; r < 8; r++) {
-        for (int c = 0; c < 8; c++) {
-            if (board[r][c] == targetKing) {
-                kingR = r; kingC = c;
-                break;
-            }
-        }
-    }
-    if (kingR == -1) return true;
-
-    vector<Move> enemyMoves = getPseudoMoves(!isWhite);
-    for (const auto& m : enemyMoves) {
-        if (m.toR == kingR && m.toC == kingC) return true;
-    }
-    return false;
 }
 
 void makeMove(const Move& m, int& savedTargetPiece) {
@@ -221,10 +264,10 @@ void makeMove(const Move& m, int& savedTargetPiece) {
         savedTargetPiece = board[epPawnR][epPawnC];
         board[epPawnR][epPawnC] = 0;
     } else if (m.isCastling) {
-        if (m.toR == 7 && m.toC == 1) { board[7][2] = board[7][0]; board[7][0] = 0; }
-        else if (m.toR == 7 && m.toC == 5) { board[7][4] = board[7][7]; board[7][7] = 0; }
-        else if (m.toR == 0 && m.toC == 1) { board[0][2] = board[0][0]; board[0][0] = 0; }
-        else if (m.toR == 0 && m.toC == 5) { board[0][4] = board[0][7]; board[0][7] = 0; }
+        if (m.toR == 7 && m.toC == 6) { board[7][5] = board[7][7]; board[7][7] = 0; }
+        else if (m.toR == 7 && m.toC == 2) { board[7][3] = board[7][0]; board[7][0] = 0; }
+        else if (m.toR == 0 && m.toC == 6) { board[0][5] = board[0][7]; board[0][7] = 0; }
+        else if (m.toR == 0 && m.toC == 2) { board[0][3] = board[0][0]; board[0][0] = 0; }
     }
 }
 
@@ -238,10 +281,10 @@ void undoMove(const Move& m, int savedTargetPiece) {
     } else if (m.isCastling) {
         board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = 0;
-        if (m.toR == 7 && m.toC == 1) { board[7][0] = board[7][2]; board[7][2] = 0; }
-        else if (m.toR == 7 && m.toC == 5) { board[7][7] = board[7][4]; board[7][4] = 0; }
-        else if (m.toR == 0 && m.toC == 1) { board[0][0] = board[0][2]; board[0][2] = 0; }
-        else if (m.toR == 0 && m.toC == 5) { board[0][7] = board[0][4]; board[0][4] = 0; }
+        if (m.toR == 7 && m.toC == 6) { board[7][7] = board[7][5]; board[7][5] = 0; }
+        else if (m.toR == 7 && m.toC == 2) { board[7][0] = board[7][3]; board[7][3] = 0; }
+        else if (m.toR == 0 && m.toC == 6) { board[0][7] = board[0][5]; board[0][5] = 0; }
+        else if (m.toR == 0 && m.toC == 2) { board[0][0] = board[0][3]; board[0][3] = 0; }
     } else {
         if (m.promo != 0) {
             board[m.fromR][m.fromC] = (m.promo > 0) ? 1 : -1;
@@ -353,8 +396,28 @@ string toAlgebraic(int r, int c) {
     return s;
 }
 
+void updateCastlingAndEnPassantFlags(const Move& m, bool isWhite) {
+    if (isWhite) {
+        if (m.fromR == 7 && m.fromC == 4) whiteKingMoved = true;
+        if (m.fromR == 7 && m.fromC == 0) whiteRookQueenMoved = true;
+        if (m.fromR == 7 && m.fromC == 7) whiteRookKingMoved = true;
+    } else {
+        if (m.fromR == 0 && m.fromC == 4) blackKingMoved = true;
+        if (m.fromR == 0 && m.fromC == 0) blackRookQueenMoved = true;
+        if (m.fromR == 0 && m.fromC == 7) blackRookKingMoved = true;
+    }
+
+    if (abs(board[m.fromR][m.fromC]) == 1 && abs(m.fromR - m.toR) == 2) {
+        enPassantTargetR = (m.fromR + m.toR) / 2;
+        enPassantTargetC = m.fromC;
+    } else {
+        enPassantTargetR = -1;
+        enPassantTargetC = -1;
+    }
+}
+
 int main() {
-    cout << "=== VINU CHESS ZERO v1.3 (FULL CHESS RULES & PST) ===\n";
+    cout << "=== VINU CHESS ZERO v1.4 (FIXED RULES & BOARD) ===\n";
     printBoard();
 
     string input;
@@ -387,32 +450,24 @@ int main() {
             continue;
         }
 
-        // Cập nhật trạng thái En Passant
-        if (abs(board[fromR][fromC]) == 1 && abs(fromR - toR) == 2) {
-            enPassantTargetR = (fromR + toR) / 2;
-            enPassantTargetC = fromC;
-        } else {
-            enPassantTargetR = -1;
-            enPassantTargetC = -1;
-        }
+        updateCastlingAndEnPassantFlags(selectedMove, true);
 
         int saved;
         makeMove(selectedMove, saved);
-        if (fromR == 7 && fromC == 3) whiteKingMoved = true;
 
         printBoard();
 
         cout << "\nAI (Den) dang suy nghi...\n";
         Move aiMove = getBestMove(false, 3);
         if (aiMove.fromR == -1) {
-            cout << "AI khong con nuoc đi hop le! TRO CHOI KET THUC.\n";
+            cout << "AI khong con nuoc di hop le! TRO CHOI KET THUC.\n";
             break;
         }
         cout << "AI chon nuoc di: " << toAlgebraic(aiMove.fromR, aiMove.fromC) 
              << " -> " << toAlgebraic(aiMove.toR, aiMove.toC) << "\n";
 
+        updateCastlingAndEnPassantFlags(aiMove, false);
         makeMove(aiMove, saved);
-        if (aiMove.fromR == 0 && aiMove.fromC == 3) blackKingMoved = true;
 
         printBoard();
     }
