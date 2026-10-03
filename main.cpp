@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <vector>
 #include <string>
@@ -161,24 +162,175 @@ vector<Move> getAllMoves(bool isWhite) {
     return allMoves;
 }
 
-int main() {
-    cout << "=======================================\n";
-    cout << "        VINU CHESS ZERO v1.0           \n";
-    cout << "=======================================\n";
-
-    printBoard();
-
-    // Lấy tất cả nước đi hợp lệ đầu tiên cho phe TRẮNG
-    vector<Move> whiteMoves = getAllMoves(true);
-
-    cout << "Tong so nuoc di hop le ban dau cua TRANG: " << whiteMoves.size() << "\n\n";
-    cout << "Danh sach cac nuoc di co thể:\n";
-    for (const auto& m : whiteMoves) {
-        cout << toAlgebraic(m.fromR, m.fromC) << " -> " << toAlgebraic(m.toR, m.toC) << "  ";
+// 1. Hàm đánh giá thế cờ (Evaluation Function)
+int evaluateBoard() {
+    int score = 0;
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 8; c++) {
+            score += board[r][c]; // Dương = Trắng ưu thế, Âm = Đen ưu thế
+        }
     }
-    cout << "\n\n";
+    return score;
+}
+
+// 2. Thuật toán Minimax kết hợp Cắt tỉa Alpha-Beta
+int minimax(int depth, bool isMaximizing, int alpha, int beta) {
+    if (depth == 0) {
+        return evaluateBoard();
+    }
+
+    vector<Move> moves = getAllMoves(isMaximizing);
+    if (moves.empty()) return evaluateBoard();
+
+    if (isMaximizing) { // Lượt của Trắng
+        int maxEval = -99999;
+        for (const auto& move : moves) {
+            int temp = board[move.toR][move.toC];
+            board[move.toR][move.toC] = board[move.fromR][move.fromC];
+            board[move.fromR][move.fromC] = 0;
+
+            int eval = minimax(depth - 1, false, alpha, beta);
+
+            board[move.fromR][move.fromC] = board[move.toR][move.toC];
+            board[move.toR][move.toC] = temp;
+
+            maxEval = max(maxEval, eval);
+            alpha = max(alpha, eval);
+            if (beta <= alpha) break; // Cắt tỉa
+        }
+        return maxEval;
+    } else { // Lượt của Đen
+        int minEval = 99999;
+        for (const auto& move : moves) {
+            int temp = board[move.toR][move.toC];
+            board[move.toR][move.toC] = board[move.fromR][move.fromC];
+            board[move.fromR][move.fromC] = 0;
+
+            int eval = minimax(depth - 1, true, alpha, beta);
+
+            board[move.fromR][move.fromC] = board[move.toR][move.toC];
+            board[move.toR][move.toC] = temp;
+
+            minEval = min(minEval, eval);
+            beta = min(beta, eval);
+            if (beta <= alpha) break; // Cắt tỉa
+        }
+        return minEval;
+    }
+}
+
+// 3. Hàm tìm nước đi tốt nhất cho AI
+Move getBestMove(bool isWhite, int depth) {
+    vector<Move> moves = getAllMoves(isWhite);
+    Move bestMove = moves[0];
+      int bestValue = isWhite ? -99999 : 99999;
+
+    for (const auto& move : moves) {
+        int temp = board[move.toR][move.toC];
+        board[move.toR][move.toC] = board[move.fromR][move.fromC];
+        board[move.fromR][move.fromC] = 0;
+
+        int boardValue = minimax(depth - 1, !isWhite, -99999, 99999);
+
+        board[move.fromR][move.fromC] = board[move.toR][move.toC];
+        board[move.toR][move.toC] = temp;
+
+        if (isWhite) {
+            if (boardValue > bestValue) {
+                bestValue = boardValue;
+                bestMove = move;
+
+            }
+        } else {
+            if (boardValue < bestValue) {
+                bestValue = boardValue;
+                bestMove = move;
+            }
+        }
+    }
+    return bestMove;
+}
+int main() {
+    cout << "========================================" << endl;
+    cout << "          VINU CHESS ZERO v1.0          " << endl;
+    cout << "========================================" << endl;
+    cout << "Nguoi choi: Trang (In hoa: P, R, N, B, Q, K)" << endl;
+    cout << "AI: Den (In thuong: p, r, n, b, q, k)" << endl;
+    cout << "Nhap nước đi dang: e2e4 (hoac gõ 'exit' de thoát)\n" << endl;
+
+    bool isGameOver = false;
+    string playerInput;
+
+    while (!isGameOver) {
+        printBoard();
+
+        // 1. LUOT CỦA NGƯỜI (BÊN TRẮNG)
+        cout << "\nLượt của bạn (Trắng): ";
+        cin >> playerInput;
+
+        if (playerInput == "exit") {
+            cout << "Cảm ơn bạn đã chơi Vinu Chess Zero!\n";
+            break;
+        }
+
+        if (playerInput.length() != 4) {
+            cout << "Lỗi: Nhập sai định dạng! Vui lòng nhập kiểu 'e2e4'.\n";
+            continue;
+        }
+
+        // Chuyển đổi tọa độ từ ký tự (e2e4 -> row, col)
+        int fromC = playerInput[0] - 'a';
+        int fromR = 8 - (playerInput[1] - '0');
+        int toC   = playerInput[2] - 'a';
+        int toR   = 8 - (playerInput[3] - '0');
+
+        // Cập nhật nước đi của Người
+        board[toR][toC] = board[fromR][fromC];
+        board[fromR][fromC] = 0;
+
+        printBoard();
+
+        // 2. LƯỢT CỦA AI (BÊN ĐEN)
+        cout << "\nAI (Đen) đang suy nghĩ nước đi...\n";
+        Move aiMove = getBestMove(false, 3); // Độ sâu depth = 3
+        
+        cout << "AI chọn nước đi: " 
+             << toAlgebraic(aiMove.fromR, aiMove.fromC) 
+             << " -> " 
+             << toAlgebraic(aiMove.toR, aiMove.toC) << "\n\n";
+
+        // Cập nhật nước đi của AI
+        board[aiMove.toR][aiMove.toC] = board[aiMove.fromR][aiMove.fromC];
+        board[aiMove.fromR][aiMove.fromC] = 0;
+    }
 
     return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
