@@ -11,6 +11,7 @@ struct Move {
     int toR, toC;
 };
 
+// Đã sửa lại đúng thứ tự chuẩn cờ vua: Xe(2), Mã(3), Tượng(4), Hậu(5), Vua(6), Tượng(4), Mã(3), Xe(2)
 int board[8][8] = {
     {-2, -3, -4, -5, -6, -4, -3, -2},
     {-1, -1, -1, -1, -1, -1, -1, -1},
@@ -66,10 +67,21 @@ vector<Move> getAllMoves(bool isWhite) {
             int p = board[r][c];
             if ((isWhite && p > 0) || (!isWhite && p < 0)) {
                 int pieceType = abs(p);
-                if (pieceType == 1) {
+                if (pieceType == 1) { // Tốt
                     int dir = isWhite ? -1 : 1;
+                    int startRow = isWhite ? 6 : 1;
                     int nr = r + dir;
-                    if (isValid(nr, c) && board[nr][c] == 0) moves.push_back(Move{r, c, nr, c});
+                    
+                    // Tiến 1 ô
+                    if (isValid(nr, c) && board[nr][c] == 0) {
+                        moves.push_back(Move{r, c, nr, c});
+                        // Tiến 2 ô nếu ở hàng xuất phát
+                        int nr2 = r + 2 * dir;
+                        if (r == startRow && board[nr2][c] == 0) {
+                            moves.push_back(Move{r, c, nr2, c});
+                        }
+                    }
+                    // Ăn chéo
                     for (int dc : {-1, 1}) {
                         int nc = c + dc;
                         if (isValid(nr, nc)) {
@@ -78,7 +90,7 @@ vector<Move> getAllMoves(bool isWhite) {
                             }
                         }
                     }
-                } else if (pieceType == 3) {
+                } else if (pieceType == 3) { // Mã
                     for (int i = 0; i < 8; i++) {
                         int nr = r + knightDr[i], nc = c + knightDc[i];
                         if (isValid(nr, nc)) {
@@ -86,7 +98,7 @@ vector<Move> getAllMoves(bool isWhite) {
                                 moves.push_back(Move{r, c, nr, nc});
                         }
                     }
-                } else if (pieceType == 2 || pieceType == 4 || pieceType == 5) {
+                } else if (pieceType == 2 || pieceType == 4 || pieceType == 5) { // Xe, Tượng, Hậu
                     vector<int> dr, dc;
                     if (pieceType == 2) { dr.assign(rookDr, rookDr+4); dc.assign(rookDc, rookDc+4); }
                     else if (pieceType == 4) { dr.assign(bishopDr, bishopDr+4); dc.assign(bishopDc, bishopDc+4); }
@@ -107,7 +119,7 @@ vector<Move> getAllMoves(bool isWhite) {
                             nr += dr[i]; nc += dc[i];
                         }
                     }
-                } else if (pieceType == 6) {
+                } else if (pieceType == 6) { // Vua
                     for (int i = 0; i < 8; i++) {
                         int nr = r + kingDr[i], nc = c + kingDc[i];
                         if (isValid(nr, nc)) {
@@ -207,7 +219,7 @@ string toAlgebraic(int r, int c) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v1.0 ===\n";
+    cout << "=== VINU CHESS ZERO v1.1 ===\n";
     printBoard();
 
     string input;
