@@ -12,18 +12,18 @@ struct Move {
     int promo = 0;      // 5 = Queen
     bool isCastling = false;
     bool isEnPassant = false;
+    int score = 0;      // Dùng để sắp xếp thứ tự nước đi (Move Ordering)
 };
 
-// Sửa lại vị trí Hậu (5) ở cột d (index 3) và Vua (6) ở cột e (index 4)
 int board[8][8] = {
-    {-2, -3, -4, -5, -6, -4, -3, -2}, // -5 là q (Hậu đen), -6 là k (Vua đen)
+    {-2, -3, -4, -5, -6, -4, -3, -2}, // d: Hậu đen (-5), e: Vua đen (-6)
     {-1, -1, -1, -1, -1, -1, -1, -1},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 1,  1,  1,  1,  1,  1,  1,  1},
-    { 2,  3,  4,  5,  6,  4,  3,  2}  // 5 là Q (Hậu trắng), 6 là K (Vua trắng)
+    { 2,  3,  4,  5,  6,  4,  3,  2}  // d: Hậu trắng (5), e: Vua trắng (6)
 };
 
 bool whiteKingMoved = false, whiteRookKingMoved = false, whiteRookQueenMoved = false;
@@ -38,6 +38,8 @@ int bishopDr[4] = {-1, -1, 1, 1};
 int bishopDc[4] = {-1, 1, -1, 1};
 int kingDr[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
 int kingDc[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
+
+int pieceValues[] = {0, 100, 500, 320, 330, 900, 20000};
 
 int pawnPST[8][8] = {
     { 0,  0,  0,  0,  0,  0,  0,  0},
@@ -212,7 +214,7 @@ vector<Move> getPseudoMoves(bool isWhite) {
                             nr += dr[i]; nc += dc[i];
                         }
                     }
-                } else if (pieceType == 6) { // Vua (Vua ở cột e - index 4)
+                } else if (pieceType == 6) { // Vua
                     for (int i = 0; i < 8; i++) {
                         int nr = r + kingDr[i], nc = c + kingDc[i];
                         if (isValid(nr, nc)) {
@@ -220,14 +222,11 @@ vector<Move> getPseudoMoves(bool isWhite) {
                                 moves.push_back(Move{r, c, nr, nc});
                         }
                     }
-                    // Nhập thành chuẩn: Vua ở cột e (4), không bị chiếu, không đi qua ô bị chiếu
                     if (isWhite && !whiteKingMoved && r == 7 && c == 4 && !isInCheck(true)) {
-                        // Nhập thành cánh Vua (O-O) -> Vua sang g8 (col 6), Xe từ h8 (col 7) sang f8 (col 5)
                         if (!whiteRookKingMoved && board[7][7] == 2 && board[7][5] == 0 && board[7][6] == 0) {
                             if (!isSquareAttacked(7, 5, false) && !isSquareAttacked(7, 6, false))
                                 moves.push_back(Move{7, 4, 7, 6, 0, true});
                         }
-                        // Nhập thành cánh Hậu (O-O-O) -> Vua sang c8 (col 2), Xe từ a8 (col 0) sang d8 (col 3)
                         if (!whiteRookQueenMoved && board[7][0] == 2 && board[7][1] == 0 && board[7][2] == 0 && board[7][3] == 0) {
                             if (!isSquareAttacked(7, 3, false) && !isSquareAttacked(7, 2, false))
                                 moves.push_back(Move{7, 4, 7, 2, 0, true});
@@ -295,7 +294,34 @@ void undoMove(const Move& m, int savedTargetPiece) {
     }
 }
 
-vector<Move> getLegalMoves(bool isWhite) {
+// === MOVE ORDERING (MVV-LVA) ===
+void scoreMoves(vector<Move>& moves, const Move* pvMove = nullptr) {
+    for (auto& m : moves) {
+        m.score = 0;
+        // Ưu tiên cao nhất cho nước đi tốt nhất từ Depth trước (Principal Variation)
+        if (pvMove && m.fromR == pvMove->fromR && m.fromC == pvMove->fromC && m.toR == pvMove->toR && m.toC == pvMove->toC) {
+            m.score = 20000;
+            continue;
+        }
+        int attacker = abs(board[m.fromR][m.fromC]);
+        int victim = abs(board[m.toR][m.toC]);
+        
+        // MVV-LVA: Nước ăn quân (Lấy điểm nạn nhân x10 - điểm kẻ tấn công)
+        if (victim != 0) {
+            m.score = 10000 + (pieceValues[victim] * 10) - pieceValues[attacker];
+        }
+        // Phong cấp
+        if (m.promo != 0) {
+            m.score += 9000;
+        }
+    }
+    // Sắp xếp các nước đi có điểm cao nhất lên đầu
+    sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
+        return a.score > b.score;
+    });
+}
+
+vector<Move> getLegalMoves(bool isWhite, const Move* pvMove = nullptr) {
     vector<Move> pseudo = getPseudoMoves(isWhite);
     vector<Move> legal;
     for (const auto& m : pseudo) {
@@ -304,21 +330,21 @@ vector<Move> getLegalMoves(bool isWhite) {
         if (!isInCheck(isWhite)) legal.push_back(m);
         undoMove(m, savedPiece);
     }
+    scoreMoves(legal, pvMove);
     return legal;
 }
 
 int evaluateBoard() {
     int score = 0;
-    int values[] = {0, 100, 500, 320, 330, 900, 20000};
     for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++) {
             int p = board[r][c];
             if (p > 0) {
-                score += values[p];
+                score += pieceValues[p];
                 if (p == 1) score += pawnPST[r][c];
                 else if (p == 3) score += knightPST[r][c];
             } else if (p < 0) {
-                score -= values[-p];
+                score -= pieceValues[-p];
                 if (p == -1) score -= pawnPST[7 - r][c];
                 else if (p == -3) score -= knightPST[7 - r][c];
             }
@@ -344,7 +370,7 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             undoMove(move, savedPiece);
             maxEval = max(maxEval, eval);
             alpha = max(alpha, eval);
-            if (beta <= alpha) break;
+            if (beta <= alpha) break; // Cắt tỉa Alpha-Beta
         }
         return maxEval;
     } else {
@@ -356,35 +382,43 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             undoMove(move, savedPiece);
             minEval = min(minEval, eval);
             beta = min(beta, eval);
-            if (beta <= alpha) break;
+            if (beta <= alpha) break; // Cắt tỉa Alpha-Beta
         }
         return minEval;
     }
 }
 
-Move getBestMove(bool isWhite, int depth) {
-    vector<Move> moves = getLegalMoves(isWhite);
-    if (moves.empty()) return Move{-1, -1, -1, -1};
-    Move bestMove = moves[0];
-    int bestValue = isWhite ? -99999 : 99999;
+// === ITERATIVE DEEPENING SEARCH ===
+Move getBestMoveIterative(bool isWhite, int maxDepth) {
+    Move bestMove = {-1, -1, -1, -1};
+    
+    for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
+        vector<Move> moves = getLegalMoves(isWhite, (bestMove.fromR != -1) ? &bestMove : nullptr);
+        if (moves.empty()) break;
+        
+        Move currentBest = moves[0];
+        int bestValue = isWhite ? -99999 : 99999;
 
-    for (const auto& move : moves) {
-        int savedPiece;
-        makeMove(move, savedPiece);
-        int boardValue = minimax(depth - 1, !isWhite, -99999, 99999);
-        undoMove(move, savedPiece);
+        for (const auto& move : moves) {
+            int savedPiece;
+            makeMove(move, savedPiece);
+            int boardValue = minimax(currentDepth - 1, !isWhite, -99999, 99999);
+            undoMove(move, savedPiece);
 
-        if (isWhite) {
-            if (boardValue > bestValue) {
-                bestValue = boardValue;
-                bestMove = move;
-            }
-        } else {
-            if (boardValue < bestValue) {
-                bestValue = boardValue;
-                bestMove = move;
+            if (isWhite) {
+                if (boardValue > bestValue) {
+                    bestValue = boardValue;
+                    currentBest = move;
+                }
+            } else {
+                if (boardValue < bestValue) {
+                    bestValue = boardValue;
+                    currentBest = move;
+                }
             }
         }
+        bestMove = currentBest;
+        cout << "  -> Pass Depth " << currentDepth << " hoan thanh!" << endl;
     }
     return bestMove;
 }
@@ -417,7 +451,7 @@ void updateCastlingAndEnPassantFlags(const Move& m, bool isWhite) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v1.4 (FIXED RULES & BOARD) ===\n";
+    cout << "=== VINU CHESS ZERO v1.5 (MOVE ORDERING & ITERATIVE DEEPENING) ===\n";
     printBoard();
 
     string input;
@@ -457,8 +491,9 @@ int main() {
 
         printBoard();
 
-        cout << "\nAI (Den) dang suy nghi...\n";
-        Move aiMove = getBestMove(false, 3);
+        cout << "\nAI (Den) dang suy nghi (Depth 5)...\n";
+        // Tăng thẳng lên Depth 5 nhờ Move Ordering + Iterative Deepening
+        Move aiMove = getBestMoveIterative(false, 5);
         if (aiMove.fromR == -1) {
             cout << "AI khong con nuoc di hop le! TRO CHOI KET THUC.\n";
             break;
