@@ -9,6 +9,9 @@ using namespace std;
 struct Move {
     int fromR, fromC;
     int toR, toC;
+    int promo = 0;      // Quân phong cấp (5 = Queen)
+    bool isCastling = false;
+    bool isEnPassant = false;
 };
 
 int board[8][8] = {
@@ -22,6 +25,11 @@ int board[8][8] = {
     { 2,  3,  4,  5,  6,  4,  3,  2}
 };
 
+// Trạng thái cho Nhập thành & Bắt tốt qua đường
+bool whiteKingMoved = false, whiteRookKingMoved = false, whiteRookQueenMoved = false;
+bool blackKingMoved = false, blackRookKingMoved = false, blackRookQueenMoved = false;
+int enPassantTargetR = -1, enPassantTargetC = -1;
+
 int knightDr[8] = {-2, -2, -1, -1, 1, 1, 2, 2};
 int knightDc[8] = {-1, 1, -2, 2, -2, 2, -1, 1};
 int rookDr[4] = {-1, 1, 0, 0};
@@ -30,6 +38,29 @@ int bishopDr[4] = {-1, -1, 1, 1};
 int bishopDc[4] = {-1, 1, -1, 1};
 int kingDr[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
 int kingDc[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
+
+// Piece-Square Tables (Đánh giá vị trí quân cờ)
+int pawnPST[8][8] = {
+    { 0,  0,  0,  0,  0,  0,  0,  0},
+    {50, 50, 50, 50, 50, 50, 50, 50},
+    {10, 10, 20, 30, 30, 20, 10, 10},
+    { 5,  5, 10, 27, 27, 10,  5,  5},
+    { 0,  0,  0, 20, 20,  0,  0,  0},
+    { 5, -5,-10,  0,  0,-10, -5,  5},
+    { 5, 10, 10,-20,-20, 10, 10,  5},
+    { 0,  0,  0,  0,  0,  0,  0,  0}
+};
+
+int knightPST[8][8] = {
+    {-50,-40,-30,-30,-30,-30,-40,-50},
+    {-40,-20,  0,  0,  0,  0,-20,-40},
+    {-30,  0, 10, 15, 15, 10,  0,-30},
+    {-30,  5, 15, 20, 20, 15,  5,-30},
+    {-30,  0, 15, 20, 20, 15,  0,-30},
+    {-30,  5, 10, 15, 15, 10,  5,-30},
+    {-40,-20,  0,  5,  5,  0,-20,-40},
+    {-50,-40,-30,-30,-30,-30,-40,-50}
+};
 
 char getPieceChar(int p) {
     switch(p) {
@@ -59,7 +90,6 @@ bool isValid(int r, int c) {
     return r >= 0 && r < 8 && c >= 0 && c < 8;
 }
 
-// Sinh tất cả nước đi thô (Pseudo-legal moves)
 vector<Move> getPseudoMoves(bool isWhite) {
     vector<Move> moves;
     for (int r = 0; r < 8; r++) {
@@ -70,20 +100,33 @@ vector<Move> getPseudoMoves(bool isWhite) {
                 if (pieceType == 1) { // Tốt
                     int dir = isWhite ? -1 : 1;
                     int startRow = isWhite ? 6 : 1;
+                    int promoRow = isWhite ? 0 : 7;
                     int nr = r + dir;
                     
                     if (isValid(nr, c) && board[nr][c] == 0) {
-                        moves.push_back(Move{r, c, nr, c});
-                        int nr2 = r + 2 * dir;
-                        if (r == startRow && board[nr2][c] == 0) {
-                            moves.push_back(Move{r, c, nr2, c});
+                        if (nr == promoRow) {
+                            moves.push_back(Move{r, c, nr, c, isWhite ? 5 : -5}); // Phong Hậu
+                        } else {
+                            moves.push_back(Move{r, c, nr, c});
+                            int nr2 = r + 2 * dir;
+                            if (r == startRow && board[nr2][c] == 0) {
+                                moves.push_back(Move{r, c, nr2, c});
+                            }
                         }
                     }
                     for (int dc : {-1, 1}) {
                         int nc = c + dc;
                         if (isValid(nr, nc)) {
                             if ((isWhite && board[nr][nc] < 0) || (!isWhite && board[nr][nc] > 0)) {
-                                moves.push_back(Move{r, c, nr, nc});
+                                if (nr == promoRow) {
+                                    moves.push_back(Move{r, c, nr, nc, isWhite ? 5 : -5});
+                                } else {
+                                    moves.push_back(Move{r, c, nr, nc});
+                                }
+                            }
+                            // Bắt Tốt qua đường (En Passant)
+                            if (nr == enPassantTargetR && nc == enPassantTargetC) {
+                                moves.push_back(Move{r, c, nr, nc, 0, false, true});
                             }
                         }
                     }
@@ -124,6 +167,18 @@ vector<Move> getPseudoMoves(bool isWhite) {
                                 moves.push_back(Move{r, c, nr, nc});
                         }
                     }
+                    // Nhập thành (Castling)
+                    if (isWhite && !whiteKingMoved && r == 7 && c == 3) {
+                        if (!whiteRookKingMoved && board[7][0] == 2 && board[7][1] == 0 && board[7][2] == 0)
+                            moves.push_back(Move{7, 3, 7, 1, 0, true});
+                        if (!whiteRookQueenMoved && board[7][7] == 2 && board[7][4] == 0 && board[7][5] == 0 && board[7][6] == 0)
+                            moves.push_back(Move{7, 3, 7, 5, 0, true});
+                    } else if (!isWhite && !blackKingMoved && r == 0 && c == 3) {
+                        if (!blackRookKingMoved && board[0][0] == -2 && board[0][1] == 0 && board[0][2] == 0)
+                            moves.push_back(Move{0, 3, 0, 1, 0, true});
+                        if (!blackRookQueenMoved && board[0][7] == -2 && board[0][4] == 0 && board[0][5] == 0 && board[0][6] == 0)
+                            moves.push_back(Move{0, 3, 0, 5, 0, true});
+                    }
                 }
             }
         }
@@ -131,7 +186,6 @@ vector<Move> getPseudoMoves(bool isWhite) {
     return moves;
 }
 
-// Kiểm tra Vua của phe isWhite có đang bị chiếu không
 bool isInCheck(bool isWhite) {
     int kingR = -1, kingC = -1;
     int targetKing = isWhite ? 6 : -6;
@@ -143,7 +197,7 @@ bool isInCheck(bool isWhite) {
             }
         }
     }
-    if (kingR == -1) return true; // Vua đã bị ăn
+    if (kingR == -1) return true;
 
     vector<Move> enemyMoves = getPseudoMoves(!isWhite);
     for (const auto& m : enemyMoves) {
@@ -152,21 +206,60 @@ bool isInCheck(bool isWhite) {
     return false;
 }
 
-// Lọc chỉ lấy các nước đi hợp lệ (không bị chiếu Vua sau khi đi)
+void makeMove(const Move& m, int& savedTargetPiece) {
+    savedTargetPiece = board[m.toR][m.toC];
+    if (m.promo != 0) {
+        board[m.toR][m.toC] = m.promo;
+    } else {
+        board[m.toR][m.toC] = board[m.fromR][m.fromC];
+    }
+    board[m.fromR][m.fromC] = 0;
+
+    if (m.isEnPassant) {
+        int epPawnR = m.fromR;
+        int epPawnC = m.toC;
+        savedTargetPiece = board[epPawnR][epPawnC];
+        board[epPawnR][epPawnC] = 0;
+    } else if (m.isCastling) {
+        if (m.toR == 7 && m.toC == 1) { board[7][2] = board[7][0]; board[7][0] = 0; }
+        else if (m.toR == 7 && m.toC == 5) { board[7][4] = board[7][7]; board[7][7] = 0; }
+        else if (m.toR == 0 && m.toC == 1) { board[0][2] = board[0][0]; board[0][0] = 0; }
+        else if (m.toR == 0 && m.toC == 5) { board[0][4] = board[0][7]; board[0][7] = 0; }
+    }
+}
+
+void undoMove(const Move& m, int savedTargetPiece) {
+    if (m.isEnPassant) {
+        board[m.fromR][m.fromC] = board[m.toR][m.toC];
+        board[m.toR][m.toC] = 0;
+        int epPawnR = m.fromR;
+        int epPawnC = m.toC;
+        board[epPawnR][epPawnC] = savedTargetPiece;
+    } else if (m.isCastling) {
+        board[m.fromR][m.fromC] = board[m.toR][m.toC];
+        board[m.toR][m.toC] = 0;
+        if (m.toR == 7 && m.toC == 1) { board[7][0] = board[7][2]; board[7][2] = 0; }
+        else if (m.toR == 7 && m.toC == 5) { board[7][7] = board[7][4]; board[7][4] = 0; }
+        else if (m.toR == 0 && m.toC == 1) { board[0][0] = board[0][2]; board[0][2] = 0; }
+        else if (m.toR == 0 && m.toC == 5) { board[0][7] = board[0][4]; board[0][4] = 0; }
+    } else {
+        if (m.promo != 0) {
+            board[m.fromR][m.fromC] = (m.promo > 0) ? 1 : -1;
+        } else {
+            board[m.fromR][m.fromC] = board[m.toR][m.toC];
+        }
+        board[m.toR][m.toC] = savedTargetPiece;
+    }
+}
+
 vector<Move> getLegalMoves(bool isWhite) {
     vector<Move> pseudo = getPseudoMoves(isWhite);
     vector<Move> legal;
     for (const auto& m : pseudo) {
-        int temp = board[m.toR][m.toC];
-        board[m.toR][m.toC] = board[m.fromR][m.fromC];
-        board[m.fromR][m.fromC] = 0;
-
-        if (!isInCheck(isWhite)) {
-            legal.push_back(m);
-        }
-
-        board[m.fromR][m.fromC] = board[m.toR][m.toC];
-        board[m.toR][m.toC] = temp;
+        int savedPiece;
+        makeMove(m, savedPiece);
+        if (!isInCheck(isWhite)) legal.push_back(m);
+        undoMove(m, savedPiece);
     }
     return legal;
 }
@@ -177,8 +270,15 @@ int evaluateBoard() {
     for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++) {
             int p = board[r][c];
-            if (p > 0) score += values[p];
-            else if (p < 0) score -= values[-p];
+            if (p > 0) {
+                score += values[p];
+                if (p == 1) score += pawnPST[r][c];
+                else if (p == 3) score += knightPST[r][c];
+            } else if (p < 0) {
+                score -= values[-p];
+                if (p == -1) score -= pawnPST[7 - r][c];
+                else if (p == -3) score -= knightPST[7 - r][c];
+            }
         }
     }
     return score;
@@ -188,19 +288,17 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     if (depth == 0) return evaluateBoard();
     vector<Move> moves = getLegalMoves(isMaximizing);
     if (moves.empty()) {
-        if (isInCheck(isMaximizing)) return isMaximizing ? -90000 : 90000; // Chiếu hết
-        return 0; // Hòa cờ (Stalemate)
+        if (isInCheck(isMaximizing)) return isMaximizing ? -90000 : 90000;
+        return 0;
     }
 
     if (isMaximizing) {
         int maxEval = -99999;
         for (const auto& move : moves) {
-            int temp = board[move.toR][move.toC];
-            board[move.toR][move.toC] = board[move.fromR][move.fromC];
-            board[move.fromR][move.fromC] = 0;
+            int savedPiece;
+            makeMove(move, savedPiece);
             int eval = minimax(depth - 1, false, alpha, beta);
-            board[move.fromR][move.fromC] = board[move.toR][move.toC];
-            board[move.toR][move.toC] = temp;
+            undoMove(move, savedPiece);
             maxEval = max(maxEval, eval);
             alpha = max(alpha, eval);
             if (beta <= alpha) break;
@@ -209,12 +307,10 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     } else {
         int minEval = 99999;
         for (const auto& move : moves) {
-            int temp = board[move.toR][move.toC];
-            board[move.toR][move.toC] = board[move.fromR][move.fromC];
-            board[move.fromR][move.fromC] = 0;
+            int savedPiece;
+            makeMove(move, savedPiece);
             int eval = minimax(depth - 1, true, alpha, beta);
-            board[move.fromR][move.fromC] = board[move.toR][move.toC];
-            board[move.toR][move.toC] = temp;
+            undoMove(move, savedPiece);
             minEval = min(minEval, eval);
             beta = min(beta, eval);
             if (beta <= alpha) break;
@@ -230,12 +326,10 @@ Move getBestMove(bool isWhite, int depth) {
     int bestValue = isWhite ? -99999 : 99999;
 
     for (const auto& move : moves) {
-        int temp = board[move.toR][move.toC];
-        board[move.toR][move.toC] = board[move.fromR][move.fromC];
-        board[move.fromR][move.fromC] = 0;
+        int savedPiece;
+        makeMove(move, savedPiece);
         int boardValue = minimax(depth - 1, !isWhite, -99999, 99999);
-        board[move.fromR][move.fromC] = board[move.toR][move.toC];
-        board[move.toR][move.toC] = temp;
+        undoMove(move, savedPiece);
 
         if (isWhite) {
             if (boardValue > bestValue) {
@@ -260,7 +354,7 @@ string toAlgebraic(int r, int c) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v1.2 ===\n";
+    cout << "=== VINU CHESS ZERO v1.3 (FULL CHESS RULES & PST) ===\n";
     printBoard();
 
     string input;
@@ -280,21 +374,31 @@ int main() {
         int toR = 8 - (input[3] - '0');
 
         vector<Move> legal = getLegalMoves(true);
-        bool isValidMove = false;
+        Move selectedMove = {-1, -1, -1, -1};
         for (const auto& m : legal) {
             if (m.fromR == fromR && m.fromC == fromC && m.toR == toR && m.toC == toC) {
-                isValidMove = true;
+                selectedMove = m;
                 break;
             }
         }
 
-        if (!isValidMove) {
-            cout << "Nuoc di KHONG HOP LE (pham luat hoac de Vua bi chieu)! Thu lai.\n";
+        if (selectedMove.fromR == -1) {
+            cout << "Nuoc di KHONG HOP LE! Thu lai.\n";
             continue;
         }
 
-        board[toR][toC] = board[fromR][fromC];
-        board[fromR][fromC] = 0;
+        // Cập nhật trạng thái En Passant
+        if (abs(board[fromR][fromC]) == 1 && abs(fromR - toR) == 2) {
+            enPassantTargetR = (fromR + toR) / 2;
+            enPassantTargetC = fromC;
+        } else {
+            enPassantTargetR = -1;
+            enPassantTargetC = -1;
+        }
+
+        int saved;
+        makeMove(selectedMove, saved);
+        if (fromR == 7 && fromC == 3) whiteKingMoved = true;
 
         printBoard();
 
@@ -307,8 +411,8 @@ int main() {
         cout << "AI chon nuoc di: " << toAlgebraic(aiMove.fromR, aiMove.fromC) 
              << " -> " << toAlgebraic(aiMove.toR, aiMove.toC) << "\n";
 
-        board[aiMove.toR][aiMove.toC] = board[aiMove.fromR][aiMove.fromC];
-        board[aiMove.fromR][aiMove.fromC] = 0;
+        makeMove(aiMove, saved);
+        if (aiMove.fromR == 0 && aiMove.fromC == 3) blackKingMoved = true;
 
         printBoard();
     }
