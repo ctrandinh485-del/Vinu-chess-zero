@@ -96,6 +96,18 @@ vector<Move> getPawnMoves(int r, int c, bool isWhite) {
             }
         }
     }
+        // Sinh nuoc di cho Vua (King)
+        if (abs(p) == 6) {
+            for (int i = 0; i < 8; i++) {
+                int nr = r + kingDr[i];
+                int nc = c + kingDc[i];
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if ((isWhite && board[nr][nc] <= 0) || (!isWhite && board[nr][nc] >= 0)) {
+                        moves.push_back({r, c, nr, nc});
+                    }
+                }
+            }
+        }
     return moves;
 }
 
@@ -111,6 +123,18 @@ vector<Move> getKnightMoves(int r, int c, bool isWhite) {
             }
         }
     }
+        // Sinh nuoc di cho Vua (King)
+        if (abs(p) == 6) {
+            for (int i = 0; i < 8; i++) {
+                int nr = r + kingDr[i];
+                int nc = c + kingDc[i];
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if ((isWhite && board[nr][nc] <= 0) || (!isWhite && board[nr][nc] >= 0)) {
+                        moves.push_back({r, c, nr, nc});
+                    }
+                }
+            }
+        }
     return moves;
 }
 
@@ -133,6 +157,18 @@ vector<Move> getSlidingMoves(int r, int c, bool isWhite, const int dr[], const i
             nc += dc[i];
         }
     }
+        // Sinh nuoc di cho Vua (King)
+        if (abs(p) == 6) {
+            for (int i = 0; i < 8; i++) {
+                int nr = r + kingDr[i];
+                int nc = c + kingDc[i];
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if ((isWhite && board[nr][nc] <= 0) || (!isWhite && board[nr][nc] >= 0)) {
+                        moves.push_back({r, c, nr, nc});
+                    }
+                }
+            }
+        }
     return moves;
 }
 
