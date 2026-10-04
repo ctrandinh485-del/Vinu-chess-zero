@@ -133,6 +133,8 @@ struct TTEntry {
 
 vector<TTEntry> tt(TT_SIZE);
 
+int killerMoves[10][2][4]; // killerMoves[depth][slot][fromR,fromC,toR,toC]
+int historyTable[8][8][8][8] = {0};
 int ttHits = 0;
 int ttStores = 0;
 int ttProbes = 0;
@@ -427,6 +429,14 @@ void scoreMoves(vector<Move>& moves, const Move* pvMove = nullptr) {
         int victim = abs(board[m.toR][m.toC]);
         if (victim != 0) m.score = 10000 + (pieceValues[victim] * 10) - pieceValues[attacker];
         if (m.promo != 0) m.score += 9000;
+        // Killer + History
+        for (int k = 0; k < 2; k++) {
+            if (killerMoves[0][k][0] == m.fromR && killerMoves[0][k][1] == m.fromC && killerMoves[0][k][2] == m.toR && killerMoves[0][k][3] == m.toC) {
+                m.score += 5000;
+                break;
+            }
+        }
+        m.score += historyTable[m.fromR][m.fromC][m.toR][m.toC];
     }
     sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
         return a.score > b.score;
@@ -527,7 +537,21 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             undoMove(move, st);
             if (eval > maxEval) { maxEval = eval; bestMove = move; }
             alpha = max(alpha, eval);
-            if (beta <= alpha) break;
+            if (beta <= alpha) {
+                // Update killer
+                if (abs(board[move.toR][move.toC]) == 0 && move.promo == 0) {
+                    killerMoves[0][1][0] = killerMoves[0][0][0];
+                    killerMoves[0][1][1] = killerMoves[0][0][1];
+                    killerMoves[0][1][2] = killerMoves[0][0][2];
+                    killerMoves[0][1][3] = killerMoves[0][0][3];
+                    killerMoves[0][0][0] = move.fromR;
+                    killerMoves[0][0][1] = move.fromC;
+                    killerMoves[0][0][2] = move.toR;
+                    killerMoves[0][0][3] = move.toC;
+                    historyTable[move.fromR][move.fromC][move.toR][move.toC] += depth * depth;
+                }
+                break;
+            }
         }
         // Store vào TT
         int flag = (maxEval <= origAlpha) ? TT_UPPER : (maxEval >= beta) ? TT_LOWER : TT_EXACT;
@@ -542,7 +566,21 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             undoMove(move, st);
             if (eval < minEval) { minEval = eval; bestMove = move; }
             beta = min(beta, eval);
-            if (beta <= alpha) break;
+            if (beta <= alpha) {
+                // Update killer
+                if (abs(board[move.toR][move.toC]) == 0 && move.promo == 0) {
+                    killerMoves[0][1][0] = killerMoves[0][0][0];
+                    killerMoves[0][1][1] = killerMoves[0][0][1];
+                    killerMoves[0][1][2] = killerMoves[0][0][2];
+                    killerMoves[0][1][3] = killerMoves[0][0][3];
+                    killerMoves[0][0][0] = move.fromR;
+                    killerMoves[0][0][1] = move.fromC;
+                    killerMoves[0][0][2] = move.toR;
+                    killerMoves[0][0][3] = move.toC;
+                    historyTable[move.fromR][move.fromC][move.toR][move.toC] += depth * depth;
+                }
+                break;
+            }
         }
         int flag = (minEval >= beta) ? TT_UPPER : (minEval <= origAlpha) ? TT_LOWER : TT_EXACT;
         ttStore(hash, depth, minEval, flag, bestMove);
@@ -586,7 +624,7 @@ string toAlgebraic(int r, int c) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v1.8 (TRANSPOSITION TABLE) ===\n";
+    cout << "=== VINU CHESS ZERO v1.9 (KILLER + HISTORY + TT) ===\n";
     initZobrist();
     clearTT();
     printBoard();
