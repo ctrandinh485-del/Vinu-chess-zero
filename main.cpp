@@ -72,13 +72,65 @@ int knightPST[8][8] = {
     {-50,-40,-30,-30,-30,-30,-40,-50}
 };
 
-// ============ ZOBRIST HASHING ============
-// Mỗi (quân, ô) có 1 số random 64-bit. XOR lại → hash duy nhất.
-// Thêm 4 số cho: lượt đi, en passant, castling W, castling B
-uint64_t zobristPiece[13][64];   // 12 loại quân (2 màu) + 1 empty
-uint64_t zobristSide;            // lượt đi (trắng = 0, đen = 1)
-uint64_t zobristCastle[4];       // WK, WQ, BK, BQ
-uint64_t zobristEnPassant[64];   // ô en passant target
+int rookPST[8][8] = {
+    {  0,  0,  0,  0,  0,  0,  0,  0},
+    {  5, 10, 10, 10, 10, 10, 10,  5},
+    { -5,  0,  0,  0,  0,  0,  0, -5},
+    { -5,  0,  0,  0,  0,  0,  0, -5},
+    { -5,  0,  0,  0,  0,  0,  0, -5},
+    { -5,  0,  0,  0,  0,  0,  0, -5},
+    { -5,  0,  0,  0,  0,  0,  0, -5},
+    {  0,  0,  0,  5,  5,  0,  0,  0}
+};
+
+int bishopPST[8][8] = {
+    {-20,-10,-10,-10,-10,-10,-10,-20},
+    {-10,  0,  0,  0,  0,  0,  0,-10},
+    {-10,  0,  5, 10, 10,  5,  0,-10},
+    {-10,  5,  5, 10, 10,  5,  5,-10},
+    {-10,  0, 10, 10, 10, 10,  0,-10},
+    {-10, 10, 10, 10, 10, 10, 10,-10},
+    {-10,  5,  0,  0,  0,  0,  5,-10},
+    {-20,-10,-10,-10,-10,-10,-10,-20}
+};
+
+int queenPST[8][8] = {
+    {-20,-10,-10, -5, -5,-10,-10,-20},
+    {-10,  0,  0,  0,  0,  0,  0,-10},
+    {-10,  0,  5,  5,  5,  5,  0,-10},
+    { -5,  0,  5,  5,  5,  5,  0, -5},
+    {  0,  0,  5,  5,  5,  5,  0, -5},
+    {-10,  5,  5,  5,  5,  5,  0,-10},
+    {-10,  0,  5,  0,  0,  0,  0,-10},
+    {-20,-10,-10, -5, -5,-10,-10,-20}
+};
+
+int kingMidPST[8][8] = {
+    {-30,-40,-40,-50,-50,-40,-40,-30},
+    {-30,-40,-40,-50,-50,-40,-40,-30},
+    {-30,-40,-40,-50,-50,-40,-40,-30},
+    {-30,-40,-40,-50,-50,-40,-40,-30},
+    {-20,-30,-30,-40,-40,-30,-30,-20},
+    {-10,-20,-20,-20,-20,-20,-20,-10},
+    { 20, 20,  0,  0,  0,  0, 20, 20},
+    { 20, 30, 10,  0,  0, 10, 30, 20}
+};
+
+int kingEndPST[8][8] = {
+    {-50,-40,-30,-20,-20,-30,-40,-50},
+    {-30,-20,-10,  0,  0,-10,-20,-30},
+    {-30,-10, 20, 30, 30, 20,-10,-30},
+    {-30,-10, 30, 40, 40, 30,-10,-30},
+    {-30,-10, 30, 40, 40, 30,-10,-30},
+    {-30,-10, 20, 30, 30, 20,-10,-30},
+    {-30,-30,  0,  0,  0,  0,-30,-30},
+    {-50,-30,-30,-30,-30,-30,-30,-50}
+};
+
+uint64_t zobristPiece[13][64];
+uint64_t zobristSide;
+uint64_t zobristCastle[4];
+uint64_t zobristEnPassant[64];
 
 void initZobrist() {
     mt19937_64 rng(1234567890ULL);
@@ -90,16 +142,13 @@ void initZobrist() {
     for (int sq = 0; sq < 64; sq++) zobristEnPassant[sq] = rng();
 }
 
-// Tính hash từ board hiện tại
 uint64_t computeHash(bool isWhiteTurn) {
     uint64_t h = 0;
-    for (int r = 0; r < 8; r++) {
+    for (int r = 0; r < 8; r++)
         for (int c = 0; c < 8; c++) {
             int p = board[r][c];
-            int pIndex = p + 6;  // -6..6 → 0..12
-            h ^= zobristPiece[pIndex][r * 8 + c];
+            h ^= zobristPiece[p + 6][r * 8 + c];
         }
-    }
     if (!isWhiteTurn) h ^= zobristSide;
     if (enPassantTargetR != -1)
         h ^= zobristEnPassant[enPassantTargetR * 8 + enPassantTargetC];
@@ -114,13 +163,11 @@ uint64_t computeHash(bool isWhiteTurn) {
     return h;
 }
 
-// ============ TRANSPOSITION TABLE ============
-const int TT_SIZE = 1 << 20;  // 1M entries
+const int TT_SIZE = 1 << 20;
 const int TT_MASK = TT_SIZE - 1;
-
 const int TT_EXACT = 0;
-const int TT_LOWER = 1;   // alpha cutoff (fail-high)
-const int TT_UPPER = 2;   // beta cutoff (fail-low)
+const int TT_LOWER = 1;
+const int TT_UPPER = 2;
 
 struct TTEntry {
     uint64_t hash = 0;
@@ -132,65 +179,42 @@ struct TTEntry {
 };
 
 vector<TTEntry> tt(TT_SIZE);
+int ttHits = 0, ttStores = 0, ttProbes = 0;
 
-int killerMoves[10][2][4]; // killerMoves[depth][slot][fromR,fromC,toR,toC]
+int killerMoves[10][2][4];
 int historyTable[8][8][8][8] = {0};
-int ttHits = 0;
-int ttStores = 0;
-int ttProbes = 0;
 
 void clearTT() {
     for (auto& e : tt) e.valid = false;
     ttHits = ttStores = ttProbes = 0;
+    for (int d = 0; d < 10; d++)
+        for (int s = 0; s < 2; s++)
+            for (int i = 0; i < 4; i++) killerMoves[d][s][i] = -1;
+    memset(historyTable, 0, sizeof(historyTable));
 }
 
 bool ttLookup(uint64_t hash, int depth, int alpha, int beta, int& outScore, Move& outMove) {
     ttProbes++;
     TTEntry& e = tt[hash & TT_MASK];
     if (!e.valid || e.hash != hash) return false;
-
-    if (e.bestFromR != -1) {
-        outMove = Move{e.bestFromR, e.bestFromC, e.bestToR, e.bestToC};
-    }
-
+    if (e.bestFromR != -1) outMove = Move{e.bestFromR, e.bestFromC, e.bestToR, e.bestToC};
     if (e.depth >= depth) {
-        if (e.flag == TT_EXACT) {
-            outScore = e.score;
-            ttHits++;
-            return true;
-        }
-        if (e.flag == TT_LOWER && e.score >= beta) {
-            outScore = e.score;
-            ttHits++;
-            return true;
-        }
-        if (e.flag == TT_UPPER && e.score <= alpha) {
-            outScore = e.score;
-            ttHits++;
-            return true;
-        }
+        if (e.flag == TT_EXACT) { outScore = e.score; ttHits++; return true; }
+        if (e.flag == TT_LOWER && e.score >= beta) { outScore = e.score; ttHits++; return true; }
+        if (e.flag == TT_UPPER && e.score <= alpha) { outScore = e.score; ttHits++; return true; }
     }
     return false;
 }
 
 void ttStore(uint64_t hash, int depth, int score, int flag, const Move& bestMove) {
     TTEntry& e = tt[hash & TT_MASK];
-    // Đơn giản: luôn ghi đè (có thể cải tiến: chỉ ghi nếu depth >= entry cũ)
     if (!e.valid || e.hash != hash || depth >= e.depth) {
-        e.hash = hash;
-        e.depth = depth;
-        e.score = score;
-        e.flag = flag;
-        e.bestFromR = bestMove.fromR;
-        e.bestFromC = bestMove.fromC;
-        e.bestToR = bestMove.toR;
-        e.bestToC = bestMove.toC;
-        e.valid = true;
-        ttStores++;
+        e.hash = hash; e.depth = depth; e.score = score; e.flag = flag;
+        e.bestFromR = bestMove.fromR; e.bestFromC = bestMove.fromC;
+        e.bestToR = bestMove.toR; e.bestToC = bestMove.toC;
+        e.valid = true; ttStores++;
     }
 }
-
-// ============ BOARD HELPERS ============
 
 char getPieceChar(int p) {
     switch(p) {
@@ -258,9 +282,8 @@ bool isInCheck(bool isWhite) {
     int kingR = -1, kingC = -1;
     int targetKing = isWhite ? 6 : -6;
     for (int r = 0; r < 8; r++) {
-        for (int c = 0; c < 8; c++) {
+        for (int c = 0; c < 8; c++)
             if (board[r][c] == targetKing) { kingR = r; kingC = c; break; }
-        }
         if (kingR != -1) break;
     }
     if (kingR == -1) return false;
@@ -331,23 +354,19 @@ vector<Move> getPseudoMoves(bool isWhite) {
                             moves.push_back(Move{r, c, nr, nc});
                     }
                     if (isWhite && !whiteKingMoved && r == 7 && c == 4 && !isInCheck(true)) {
-                        if (!whiteRookKingMoved && board[7][7] == 2 && board[7][5] == 0 && board[7][6] == 0) {
+                        if (!whiteRookKingMoved && board[7][7] == 2 && board[7][5] == 0 && board[7][6] == 0)
                             if (!isSquareAttacked(7, 5, false) && !isSquareAttacked(7, 6, false))
                                 moves.push_back(Move{7, 4, 7, 6, 0, true});
-                        }
-                        if (!whiteRookQueenMoved && board[7][0] == 2 && board[7][1] == 0 && board[7][2] == 0 && board[7][3] == 0) {
+                        if (!whiteRookQueenMoved && board[7][0] == 2 && board[7][1] == 0 && board[7][2] == 0 && board[7][3] == 0)
                             if (!isSquareAttacked(7, 3, false) && !isSquareAttacked(7, 2, false))
                                 moves.push_back(Move{7, 4, 7, 2, 0, true});
-                        }
                     } else if (!isWhite && !blackKingMoved && r == 0 && c == 4 && !isInCheck(false)) {
-                        if (!blackRookKingMoved && board[0][7] == -2 && board[0][5] == 0 && board[0][6] == 0) {
+                        if (!blackRookKingMoved && board[0][7] == -2 && board[0][5] == 0 && board[0][6] == 0)
                             if (!isSquareAttacked(0, 5, true) && !isSquareAttacked(0, 6, true))
                                 moves.push_back(Move{0, 4, 0, 6, 0, true});
-                        }
-                        if (!blackRookQueenMoved && board[0][0] == -2 && board[0][1] == 0 && board[0][2] == 0 && board[0][3] == 0) {
+                        if (!blackRookQueenMoved && board[0][0] == -2 && board[0][1] == 0 && board[0][2] == 0 && board[0][3] == 0)
                             if (!isSquareAttacked(0, 3, true) && !isSquareAttacked(0, 2, true))
                                 moves.push_back(Move{0, 4, 0, 2, 0, true});
-                        }
                     }
                 }
             }
@@ -358,8 +377,7 @@ vector<Move> getPseudoMoves(bool isWhite) {
 
 void makeMove(const Move& m, UndoState& st) {
     st.savedPiece = board[m.toR][m.toC];
-    st.savedEpR = enPassantTargetR;
-    st.savedEpC = enPassantTargetC;
+    st.savedEpR = enPassantTargetR; st.savedEpC = enPassantTargetC;
     st.savedWK = whiteKingMoved; st.savedWQ = whiteRookQueenMoved; st.savedWRK = whiteRookKingMoved;
     st.savedBK = blackKingMoved; st.savedBQ = blackRookQueenMoved; st.savedBRK = blackRookKingMoved;
 
@@ -388,8 +406,7 @@ void makeMove(const Move& m, UndoState& st) {
         enPassantTargetR = (m.fromR + m.toR) / 2;
         enPassantTargetC = m.fromC;
     } else {
-        enPassantTargetR = -1;
-        enPassantTargetC = -1;
+        enPassantTargetR = -1; enPassantTargetC = -1;
     }
 }
 
@@ -410,40 +427,37 @@ void undoMove(const Move& m, const UndoState& st) {
         else board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = st.savedPiece;
     }
-
-    enPassantTargetR = st.savedEpR;
-    enPassantTargetC = st.savedEpC;
+    enPassantTargetR = st.savedEpR; enPassantTargetC = st.savedEpC;
     whiteKingMoved = st.savedWK; whiteRookQueenMoved = st.savedWQ; whiteRookKingMoved = st.savedWRK;
     blackKingMoved = st.savedBK; blackRookQueenMoved = st.savedBQ; blackRookKingMoved = st.savedBRK;
 }
 
-void scoreMoves(vector<Move>& moves, const Move* pvMove = nullptr) {
+void scoreMoves(vector<Move>& moves, const Move* pvMove = nullptr, int depth = 0) {
     for (auto& m : moves) {
         m.score = 0;
         if (pvMove && m.fromR == pvMove->fromR && m.fromC == pvMove->fromC
             && m.toR == pvMove->toR && m.toC == pvMove->toC) {
-            m.score = 20000;
-            continue;
+            m.score = 20000; continue;
         }
         int attacker = abs(board[m.fromR][m.fromC]);
         int victim = abs(board[m.toR][m.toC]);
         if (victim != 0) m.score = 10000 + (pieceValues[victim] * 10) - pieceValues[attacker];
         if (m.promo != 0) m.score += 9000;
-        // Killer + History
         for (int k = 0; k < 2; k++) {
-            if (killerMoves[0][k][0] == m.fromR && killerMoves[0][k][1] == m.fromC && killerMoves[0][k][2] == m.toR && killerMoves[0][k][3] == m.toC) {
-                m.score += 5000;
-                break;
+            if (killerMoves[depth][k][0] == m.fromR && killerMoves[depth][k][1] == m.fromC
+                && killerMoves[depth][k][2] == m.toR && killerMoves[depth][k][3] == m.toC) {
+                m.score += 5000; break;
             }
         }
-        m.score += historyTable[m.fromR][m.fromC][m.toR][m.toC];
+        if (victim == 0 && m.promo == 0)
+            m.score += historyTable[m.fromR][m.fromC][m.toR][m.toC];
     }
     sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
         return a.score > b.score;
     });
 }
 
-vector<Move> getLegalMoves(bool isWhite, const Move* pvMove = nullptr) {
+vector<Move> getLegalMoves(bool isWhite, const Move* pvMove = nullptr, int depth = 0) {
     vector<Move> pseudo = getPseudoMoves(isWhite);
     vector<Move> legal;
     for (const auto& m : pseudo) {
@@ -452,12 +466,13 @@ vector<Move> getLegalMoves(bool isWhite, const Move* pvMove = nullptr) {
         if (!isInCheck(isWhite)) legal.push_back(m);
         undoMove(m, st);
     }
-    scoreMoves(legal, pvMove);
+    scoreMoves(legal, pvMove, depth);
     return legal;
 }
 
 int evaluateBoard() {
     int score = 0;
+    int pieceCount = 0;
     for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++) {
             int p = board[r][c];
@@ -465,17 +480,31 @@ int evaluateBoard() {
                 score += pieceValues[p];
                 if (p == 1) score += pawnPST[r][c];
                 else if (p == 3) score += knightPST[r][c];
+                else if (p == 2) score += rookPST[r][c];
+                else if (p == 4) score += bishopPST[r][c];
+                else if (p == 5) score += queenPST[r][c];
+                if (p == 2 || p == 4 || p == 5) pieceCount++;
             } else if (p < 0) {
                 score -= pieceValues[-p];
                 if (p == -1) score -= pawnPST[7 - r][c];
                 else if (p == -3) score -= knightPST[7 - r][c];
+                else if (p == -2) score -= rookPST[7 - r][c];
+                else if (p == -4) score -= bishopPST[7 - r][c];
+                else if (p == -5) score -= queenPST[7 - r][c];
+                if (p == -2 || p == -4 || p == -5) pieceCount++;
             }
         }
     }
+    bool endgame = false;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++) {
+            int p = board[r][c];
+            if (p == 6) score += endgame ? kingEndPST[r][c] : kingMidPST[r][c];
+            else if (p == -6) score -= endgame ? kingEndPST[7 - r][c] : kingMidPST[7 - r][c];
+        }
     return score;
 }
 
-// ============ QUIESCENCE (v1.7 fixed) ============
 int quiescenceSearch(bool isMaximizing, int alpha, int beta) {
     int standPat = evaluateBoard();
     if (isMaximizing) {
@@ -487,7 +516,7 @@ int quiescenceSearch(bool isMaximizing, int alpha, int beta) {
     }
 
     vector<Move> moves = getPseudoMoves(isMaximizing);
-    scoreMoves(moves);
+    scoreMoves(moves, nullptr, 0);
 
     for (const auto& move : moves) {
         if (board[move.toR][move.toC] == 0 && move.promo == 0 && !move.isEnPassant) continue;
@@ -507,19 +536,15 @@ int quiescenceSearch(bool isMaximizing, int alpha, int beta) {
     return isMaximizing ? alpha : beta;
 }
 
-// ============ MINIMAX + TT (v1.8) ============
 int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     if (depth == 0) return quiescenceSearch(isMaximizing, alpha, beta);
 
-    // === TT LOOKUP ===
     uint64_t hash = computeHash(isMaximizing);
     int ttScore;
     Move ttMove{-1,-1,-1,-1};
-    if (ttLookup(hash, depth, alpha, beta, ttScore, ttMove)) {
-        return ttScore;
-    }
+    if (ttLookup(hash, depth, alpha, beta, ttScore, ttMove)) return ttScore;
 
-    vector<Move> moves = getLegalMoves(isMaximizing, (ttMove.fromR != -1) ? &ttMove : nullptr);
+    vector<Move> moves = getLegalMoves(isMaximizing, (ttMove.fromR != -1) ? &ttMove : nullptr, depth);
     if (moves.empty()) {
         if (isInCheck(isMaximizing)) return isMaximizing ? -90000 : 90000;
         return 0;
@@ -530,6 +555,7 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
 
     if (isMaximizing) {
         int maxEval = -99999;
+        int origBeta = beta;
         for (const auto& move : moves) {
             UndoState st;
             makeMove(move, st);
@@ -538,27 +564,26 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             if (eval > maxEval) { maxEval = eval; bestMove = move; }
             alpha = max(alpha, eval);
             if (beta <= alpha) {
-                // Update killer
                 if (abs(board[move.toR][move.toC]) == 0 && move.promo == 0) {
-                    killerMoves[0][1][0] = killerMoves[0][0][0];
-                    killerMoves[0][1][1] = killerMoves[0][0][1];
-                    killerMoves[0][1][2] = killerMoves[0][0][2];
-                    killerMoves[0][1][3] = killerMoves[0][0][3];
-                    killerMoves[0][0][0] = move.fromR;
-                    killerMoves[0][0][1] = move.fromC;
-                    killerMoves[0][0][2] = move.toR;
-                    killerMoves[0][0][3] = move.toC;
+                    killerMoves[depth][1][0] = killerMoves[depth][0][0];
+                    killerMoves[depth][1][1] = killerMoves[depth][0][1];
+                    killerMoves[depth][1][2] = killerMoves[depth][0][2];
+                    killerMoves[depth][1][3] = killerMoves[depth][0][3];
+                    killerMoves[depth][0][0] = move.fromR;
+                    killerMoves[depth][0][1] = move.fromC;
+                    killerMoves[depth][0][2] = move.toR;
+                    killerMoves[depth][0][3] = move.toC;
                     historyTable[move.fromR][move.fromC][move.toR][move.toC] += depth * depth;
                 }
                 break;
             }
         }
-        // Store vào TT
-        int flag = (maxEval <= origAlpha) ? TT_UPPER : (maxEval >= beta) ? TT_LOWER : TT_EXACT;
+        int flag = (maxEval <= origAlpha) ? TT_UPPER : (maxEval >= origBeta) ? TT_LOWER : TT_EXACT;
         ttStore(hash, depth, maxEval, flag, bestMove);
         return maxEval;
     } else {
         int minEval = 99999;
+        int origBeta = beta;
         for (const auto& move : moves) {
             UndoState st;
             makeMove(move, st);
@@ -567,22 +592,21 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
             if (eval < minEval) { minEval = eval; bestMove = move; }
             beta = min(beta, eval);
             if (beta <= alpha) {
-                // Update killer
                 if (abs(board[move.toR][move.toC]) == 0 && move.promo == 0) {
-                    killerMoves[0][1][0] = killerMoves[0][0][0];
-                    killerMoves[0][1][1] = killerMoves[0][0][1];
-                    killerMoves[0][1][2] = killerMoves[0][0][2];
-                    killerMoves[0][1][3] = killerMoves[0][0][3];
-                    killerMoves[0][0][0] = move.fromR;
-                    killerMoves[0][0][1] = move.fromC;
-                    killerMoves[0][0][2] = move.toR;
-                    killerMoves[0][0][3] = move.toC;
+                    killerMoves[depth][1][0] = killerMoves[depth][0][0];
+                    killerMoves[depth][1][1] = killerMoves[depth][0][1];
+                    killerMoves[depth][1][2] = killerMoves[depth][0][2];
+                    killerMoves[depth][1][3] = killerMoves[depth][0][3];
+                    killerMoves[depth][0][0] = move.fromR;
+                    killerMoves[depth][0][1] = move.fromC;
+                    killerMoves[depth][0][2] = move.toR;
+                    killerMoves[depth][0][3] = move.toC;
                     historyTable[move.fromR][move.fromC][move.toR][move.toC] += depth * depth;
                 }
                 break;
             }
         }
-        int flag = (minEval >= beta) ? TT_UPPER : (minEval <= origAlpha) ? TT_LOWER : TT_EXACT;
+        int flag = (minEval >= origBeta) ? TT_UPPER : (minEval <= origAlpha) ? TT_LOWER : TT_EXACT;
         ttStore(hash, depth, minEval, flag, bestMove);
         return minEval;
     }
@@ -590,20 +614,16 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
 
 Move getBestMoveIterative(bool isWhite, int maxDepth) {
     Move bestMove = {-1, -1, -1, -1};
-
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
-        vector<Move> moves = getLegalMoves(isWhite, (bestMove.fromR != -1) ? &bestMove : nullptr);
+        vector<Move> moves = getLegalMoves(isWhite, (bestMove.fromR != -1) ? &bestMove : nullptr, currentDepth);
         if (moves.empty()) break;
-
         Move currentBest = moves[0];
         int bestValue = isWhite ? -99999 : 99999;
-
         for (const auto& move : moves) {
             UndoState st;
             makeMove(move, st);
             int boardValue = minimax(currentDepth - 1, !isWhite, -99999, 99999);
             undoMove(move, st);
-
             if (isWhite) {
                 if (boardValue > bestValue) { bestValue = boardValue; currentBest = move; }
             } else {
@@ -624,7 +644,7 @@ string toAlgebraic(int r, int c) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v1.9 (KILLER + HISTORY + TT) ===\n";
+    cout << "=== VINU CHESS ZERO v2.0 (FULL PST + TT + KILLER) ===\n";
     initZobrist();
     clearTT();
     printBoard();
@@ -635,41 +655,30 @@ int main() {
         cout << "Nuoc di cua ban (vd: e2e4) hoac \"quit\": ";
         cin >> input;
         if (input == "quit") break;
-        if (input.length() != 4) {
-            cout << "Cu phap khong hop le! Thu lai.\n";
-            continue;
-        }
+        if (input.length() != 4) { cout << "Cu phap khong hop le! Thu lai.\n"; continue; }
 
         int fromC = input[0] - 'a';
         int fromR = 8 - (input[1] - '0');
         int toC = input[2] - 'a';
         int toR = 8 - (input[3] - '0');
 
-        vector<Move> legal = getLegalMoves(true);
+        vector<Move> legal = getLegalMoves(true, nullptr, 0);
         Move selectedMove = {-1, -1, -1, -1};
         for (const auto& m : legal) {
             if (m.fromR == fromR && m.fromC == fromC && m.toR == toR && m.toC == toC) {
-                selectedMove = m;
-                break;
+                selectedMove = m; break;
             }
         }
-
-        if (selectedMove.fromR == -1) {
-            cout << "Nuoc di KHONG HOP LE! Thu lai.\n";
-            continue;
-        }
+        if (selectedMove.fromR == -1) { cout << "Nuoc di KHONG HOP LE! Thu lai.\n"; continue; }
 
         UndoState st;
         makeMove(selectedMove, st);
         printBoard();
 
-        cout << "\nAI (Den) dang suy nghi (Depth 5 + QSearch + TT)...\n";
+        cout << "\nAI (Den) dang suy nghi (Depth 5 + QSearch + TT + Killer)...\n";
         int prevHits = ttHits, prevProbes = ttProbes;
         Move aiMove = getBestMoveIterative(false, 5);
-        if (aiMove.fromR == -1) {
-            cout << "AI khong con nuoc di hop le! TRO CHOI KET THUC.\n";
-            break;
-        }
+        if (aiMove.fromR == -1) { cout << "AI khong con nuoc di hop le! TRO CHOI KET THUC.\n"; break; }
         cout << "AI chon nuoc di: " << toAlgebraic(aiMove.fromR, aiMove.fromC)
              << " -> " << toAlgebraic(aiMove.toR, aiMove.toC) << "\n";
         cout << "  TT stats: +" << (ttHits - prevHits) << " hits / +" << (ttProbes - prevProbes) << " probes\n";
