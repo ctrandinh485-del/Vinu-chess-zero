@@ -9,21 +9,28 @@ using namespace std;
 struct Move {
     int fromR, fromC;
     int toR, toC;
-    int promo = 0;      // 5 = Queen
+    int promo = 0;
     bool isCastling = false;
     bool isEnPassant = false;
-    int score = 0;      // Dùng để sắp xếp thứ tự nước đi (Move Ordering)
+    int score = 0;
+};
+
+struct UndoState {
+    int savedPiece;
+    int savedEpR, savedEpC;
+    bool savedWK, savedWQ, savedWRK, savedWRQ;
+    bool savedBK, savedBQ, savedBRK, savedBRQ;
 };
 
 int board[8][8] = {
-    {-2, -3, -4, -5, -6, -4, -3, -2}, // d: Hậu đen (-5), e: Vua đen (-6)
+    {-2, -3, -4, -5, -6, -4, -3, -2},
     {-1, -1, -1, -1, -1, -1, -1, -1},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 0,  0,  0,  0,  0,  0,  0,  0},
     { 1,  1,  1,  1,  1,  1,  1,  1},
-    { 2,  3,  4,  5,  6,  4,  3,  2}  // d: Hậu trắng (5), e: Vua trắng (6)
+    { 2,  3,  4,  5,  6,  4,  3,  2}
 };
 
 bool whiteKingMoved = false, whiteRookKingMoved = false, whiteRookQueenMoved = false;
@@ -141,8 +148,10 @@ bool isInCheck(bool isWhite) {
                 break;
             }
         }
+        if (kingR != -1) break;
     }
-    if (kingR == -1) return true;
+    // FIX: Không tìm thấy Vua -> không bị chiếu (tránh false positive)
+    if (kingR == -1) return false;
     return isSquareAttacked(kingR, kingC, !isWhite);
 }
 
@@ -153,12 +162,12 @@ vector<Move> getPseudoMoves(bool isWhite) {
             int p = board[r][c];
             if ((isWhite && p > 0) || (!isWhite && p < 0)) {
                 int pieceType = abs(p);
-                if (pieceType == 1) { // Tốt
+                if (pieceType == 1) {
                     int dir = isWhite ? -1 : 1;
                     int startRow = isWhite ? 6 : 1;
                     int promoRow = isWhite ? 0 : 7;
                     int nr = r + dir;
-                    
+
                     if (isValid(nr, c) && board[nr][c] == 0) {
                         if (nr == promoRow) {
                             moves.push_back(Move{r, c, nr, c, isWhite ? 5 : -5});
@@ -185,7 +194,7 @@ vector<Move> getPseudoMoves(bool isWhite) {
                             }
                         }
                     }
-                } else if (pieceType == 3) { // Mã
+                } else if (pieceType == 3) {
                     for (int i = 0; i < 8; i++) {
                         int nr = r + knightDr[i], nc = c + knightDc[i];
                         if (isValid(nr, nc)) {
@@ -193,7 +202,7 @@ vector<Move> getPseudoMoves(bool isWhite) {
                                 moves.push_back(Move{r, c, nr, nc});
                         }
                     }
-                } else if (pieceType == 2 || pieceType == 4 || pieceType == 5) { // Xe, Tượng, Hậu
+                } else if (pieceType == 2 || pieceType == 4 || pieceType == 5) {
                     vector<int> dr, dc;
                     if (pieceType == 2) { dr.assign(rookDr, rookDr+4); dc.assign(rookDc, rookDc+4); }
                     else if (pieceType == 4) { dr.assign(bishopDr, bishopDr+4); dc.assign(bishopDc, bishopDc+4); }
@@ -214,7 +223,7 @@ vector<Move> getPseudoMoves(bool isWhite) {
                             nr += dr[i]; nc += dc[i];
                         }
                     }
-                } else if (pieceType == 6) { // Vua
+                } else if (pieceType == 6) {
                     for (int i = 0; i < 8; i++) {
                         int nr = r + kingDr[i], nc = c + kingDc[i];
                         if (isValid(nr, nc)) {
@@ -248,8 +257,14 @@ vector<Move> getPseudoMoves(bool isWhite) {
     return moves;
 }
 
-void makeMove(const Move& m, int& savedTargetPiece) {
-    savedTargetPiece = board[m.toR][m.toC];
+// FIX: Lưu/restore enPassant + castling flags + en passant capture
+void makeMove(const Move& m, UndoState& st) {
+    st.savedPiece = board[m.toR][m.toC];
+    st.savedEpR = enPassantTargetR;
+    st.savedEpC = enPassantTargetC;
+    st.savedWK = whiteKingMoved; st.savedWQ = whiteRookQueenMoved; st.savedWRK = whiteRookKingMoved;
+    st.savedBK = blackKingMoved; st.savedBQ = blackRookQueenMoved; st.savedBRK = blackRookKingMoved;
+
     if (m.promo != 0) {
         board[m.toR][m.toC] = m.promo;
     } else {
@@ -260,7 +275,7 @@ void makeMove(const Move& m, int& savedTargetPiece) {
     if (m.isEnPassant) {
         int epPawnR = m.fromR;
         int epPawnC = m.toC;
-        savedTargetPiece = board[epPawnR][epPawnC];
+        st.savedPiece = board[epPawnR][epPawnC];
         board[epPawnR][epPawnC] = 0;
     } else if (m.isCastling) {
         if (m.toR == 7 && m.toC == 6) { board[7][5] = board[7][7]; board[7][7] = 0; }
@@ -268,15 +283,32 @@ void makeMove(const Move& m, int& savedTargetPiece) {
         else if (m.toR == 0 && m.toC == 6) { board[0][5] = board[0][7]; board[0][7] = 0; }
         else if (m.toR == 0 && m.toC == 2) { board[0][3] = board[0][0]; board[0][0] = 0; }
     }
+
+    // Update castling flags ngay trong makeMove
+    if (m.fromR == 7 && m.fromC == 4) whiteKingMoved = true;
+    if (m.fromR == 7 && m.fromC == 0) whiteRookQueenMoved = true;
+    if (m.fromR == 7 && m.fromC == 7) whiteRookKingMoved = true;
+    if (m.fromR == 0 && m.fromC == 4) blackKingMoved = true;
+    if (m.fromR == 0 && m.fromC == 0) blackRookQueenMoved = true;
+    if (m.fromR == 0 && m.fromC == 7) blackRookKingMoved = true;
+
+    // Update en passant target
+    if (abs(board[m.toR][m.toC]) == 1 && abs(m.fromR - m.toR) == 2) {
+        enPassantTargetR = (m.fromR + m.toR) / 2;
+        enPassantTargetC = m.fromC;
+    } else {
+        enPassantTargetR = -1;
+        enPassantTargetC = -1;
+    }
 }
 
-void undoMove(const Move& m, int savedTargetPiece) {
+void undoMove(const Move& m, const UndoState& st) {
     if (m.isEnPassant) {
         board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = 0;
         int epPawnR = m.fromR;
         int epPawnC = m.toC;
-        board[epPawnR][epPawnC] = savedTargetPiece;
+        board[epPawnR][epPawnC] = st.savedPiece;
     } else if (m.isCastling) {
         board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = 0;
@@ -290,8 +322,13 @@ void undoMove(const Move& m, int savedTargetPiece) {
         } else {
             board[m.fromR][m.fromC] = board[m.toR][m.toC];
         }
-        board[m.toR][m.toC] = savedTargetPiece;
+        board[m.toR][m.toC] = st.savedPiece;
     }
+
+    enPassantTargetR = st.savedEpR;
+    enPassantTargetC = st.savedEpC;
+    whiteKingMoved = st.savedWK; whiteRookQueenMoved = st.savedWQ; whiteRookKingMoved = st.savedWRK;
+    blackKingMoved = st.savedBK; blackRookQueenMoved = st.savedBQ; blackRookKingMoved = st.savedBRK;
 }
 
 void scoreMoves(vector<Move>& moves, const Move* pvMove = nullptr) {
@@ -319,10 +356,10 @@ vector<Move> getLegalMoves(bool isWhite, const Move* pvMove = nullptr) {
     vector<Move> pseudo = getPseudoMoves(isWhite);
     vector<Move> legal;
     for (const auto& m : pseudo) {
-        int savedPiece;
-        makeMove(m, savedPiece);
+        UndoState st;
+        makeMove(m, st);
         if (!isInCheck(isWhite)) legal.push_back(m);
-        undoMove(m, savedPiece);
+        undoMove(m, st);
     }
     scoreMoves(legal, pvMove);
     return legal;
@@ -347,6 +384,7 @@ int evaluateBoard() {
     return score;
 }
 
+// FIX: QSearch dùng pseudo moves, check illegal thủ công, tránh corrupt state
 int quiescenceSearch(bool isMaximizing, int alpha, int beta) {
     int standPat = evaluateBoard();
     if (isMaximizing) {
@@ -357,14 +395,18 @@ int quiescenceSearch(bool isMaximizing, int alpha, int beta) {
         if (beta > standPat) beta = standPat;
     }
 
-    vector<Move> moves = getLegalMoves(isMaximizing);
+    vector<Move> moves = getPseudoMoves(isMaximizing);
+    scoreMoves(moves);
+
     for (const auto& move : moves) {
+        // Chỉ xét capture/promotion/en passant
         if (board[move.toR][move.toC] == 0 && move.promo == 0 && !move.isEnPassant) continue;
 
-        int savedPiece;
-        makeMove(move, savedPiece);
+        UndoState st;
+        makeMove(move, st);
+        if (isInCheck(isMaximizing)) { undoMove(move, st); continue; }
         int score = quiescenceSearch(!isMaximizing, alpha, beta);
-        undoMove(move, savedPiece);
+        undoMove(move, st);
 
         if (isMaximizing) {
             if (score >= beta) return beta;
@@ -389,10 +431,10 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     if (isMaximizing) {
         int maxEval = -99999;
         for (const auto& move : moves) {
-            int savedPiece;
-            makeMove(move, savedPiece);
+            UndoState st;
+            makeMove(move, st);
             int eval = minimax(depth - 1, false, alpha, beta);
-            undoMove(move, savedPiece);
+            undoMove(move, st);
             maxEval = max(maxEval, eval);
             alpha = max(alpha, eval);
             if (beta <= alpha) break;
@@ -401,10 +443,10 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     } else {
         int minEval = 99999;
         for (const auto& move : moves) {
-            int savedPiece;
-            makeMove(move, savedPiece);
+            UndoState st;
+            makeMove(move, st);
             int eval = minimax(depth - 1, true, alpha, beta);
-            undoMove(move, savedPiece);
+            undoMove(move, st);
             minEval = min(minEval, eval);
             beta = min(beta, eval);
             if (beta <= alpha) break;
@@ -415,19 +457,19 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
 
 Move getBestMoveIterative(bool isWhite, int maxDepth) {
     Move bestMove = {-1, -1, -1, -1};
-    
+
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
         vector<Move> moves = getLegalMoves(isWhite, (bestMove.fromR != -1) ? &bestMove : nullptr);
         if (moves.empty()) break;
-        
+
         Move currentBest = moves[0];
         int bestValue = isWhite ? -99999 : 99999;
 
         for (const auto& move : moves) {
-            int savedPiece;
-            makeMove(move, savedPiece);
+            UndoState st;
+            makeMove(move, st);
             int boardValue = minimax(currentDepth - 1, !isWhite, -99999, 99999);
-            undoMove(move, savedPiece);
+            undoMove(move, st);
 
             if (isWhite) {
                 if (boardValue > bestValue) {
@@ -454,28 +496,8 @@ string toAlgebraic(int r, int c) {
     return s;
 }
 
-void updateCastlingAndEnPassantFlags(const Move& m, bool isWhite) {
-    if (isWhite) {
-        if (m.fromR == 7 && m.fromC == 4) whiteKingMoved = true;
-        if (m.fromR == 7 && m.fromC == 0) whiteRookQueenMoved = true;
-        if (m.fromR == 7 && m.fromC == 7) whiteRookKingMoved = true;
-    } else {
-        if (m.fromR == 0 && m.fromC == 4) blackKingMoved = true;
-        if (m.fromR == 0 && m.fromC == 0) blackRookQueenMoved = true;
-        if (m.fromR == 0 && m.fromC == 7) blackRookKingMoved = true;
-    }
-
-    if (abs(board[m.fromR][m.fromC]) == 1 && abs(m.fromR - m.toR) == 2) {
-        enPassantTargetR = (m.fromR + m.toR) / 2;
-        enPassantTargetC = m.fromC;
-    } else {
-        enPassantTargetR = -1;
-        enPassantTargetC = -1;
-    }
-}
-
 int main() {
-    cout << "=== VINU CHESS ZERO v1.6 (INTEGRATED QUIESCENCE SEARCH) ===\n";
+    cout << "=== VINU CHESS ZERO v1.7 (FIXED QUIESCENCE SEARCH) ===\n";
     printBoard();
 
     string input;
@@ -508,11 +530,8 @@ int main() {
             continue;
         }
 
-        updateCastlingAndEnPassantFlags(selectedMove, true);
-
-        int saved;
-        makeMove(selectedMove, saved);
-
+        UndoState st;
+        makeMove(selectedMove, st);
         printBoard();
 
         cout << "\nAI (Den) dang suy nghi (Depth 5 + Quiescence Search)...\n";
@@ -521,12 +540,11 @@ int main() {
             cout << "AI khong con nuoc di hop le! TRO CHOI KET THUC.\n";
             break;
         }
-        cout << "AI chon nuoc di: " << toAlgebraic(aiMove.fromR, aiMove.fromC) 
+        cout << "AI chon nuoc di: " << toAlgebraic(aiMove.fromR, aiMove.fromC)
              << " -> " << toAlgebraic(aiMove.toR, aiMove.toC) << "\n";
 
-        updateCastlingAndEnPassantFlags(aiMove, false);
-        makeMove(aiMove, saved);
-
+        UndoState st2;
+        makeMove(aiMove, st2);
         printBoard();
     }
     return 0;
