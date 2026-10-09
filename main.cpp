@@ -19,6 +19,7 @@ struct Move {
 
 struct UndoState {
     int savedPiece;
+    int savedEpPiece;    // FIX BUG 1
     int savedEpR, savedEpC;
     bool savedWK, savedWQ, savedWRK, savedWRQ;
     bool savedBK, savedBQ, savedBRK, savedBRQ;
@@ -386,7 +387,7 @@ void makeMove(const Move& m, UndoState& st) {
     board[m.fromR][m.fromC] = 0;
 
     if (m.isEnPassant) {
-        st.savedPiece = board[m.fromR][m.toC];
+        st.savedEpPiece = board[m.fromR][m.toC];  // FIX BUG 1
         board[m.fromR][m.toC] = 0;
     } else if (m.isCastling) {
         if (m.toR == 7 && m.toC == 6) { board[7][5] = board[7][7]; board[7][7] = 0; }
@@ -402,6 +403,12 @@ void makeMove(const Move& m, UndoState& st) {
     if (m.fromR == 0 && m.fromC == 0) blackRookQueenMoved = true;
     if (m.fromR == 0 && m.fromC == 7) blackRookKingMoved = true;
 
+    // FIX BUG 3: Update castling rights khi Xe BỊ ĂN
+    if (m.toR == 7 && m.toC == 0) whiteRookQueenMoved = true;
+    if (m.toR == 7 && m.toC == 7) whiteRookKingMoved = true;
+    if (m.toR == 0 && m.toC == 0) blackRookQueenMoved = true;
+    if (m.toR == 0 && m.toC == 7) blackRookKingMoved = true;
+
     if (abs(board[m.toR][m.toC]) == 1 && abs(m.fromR - m.toR) == 2) {
         enPassantTargetR = (m.fromR + m.toR) / 2;
         enPassantTargetC = m.fromC;
@@ -414,7 +421,7 @@ void undoMove(const Move& m, const UndoState& st) {
     if (m.isEnPassant) {
         board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = 0;
-        board[m.fromR][m.toC] = st.savedPiece;
+        board[m.fromR][m.toC] = st.savedEpPiece;  // FIX BUG 1
     } else if (m.isCastling) {
         board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = 0;
@@ -472,7 +479,6 @@ vector<Move> getLegalMoves(bool isWhite, const Move* pvMove = nullptr, int depth
 
 int evaluateBoard() {
     int score = 0;
-    int pieceCount = 0;
     for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++) {
             int p = board[r][c];
@@ -483,7 +489,6 @@ int evaluateBoard() {
                 else if (p == 2) score += rookPST[r][c];
                 else if (p == 4) score += bishopPST[r][c];
                 else if (p == 5) score += queenPST[r][c];
-                if (p == 2 || p == 4 || p == 5) pieceCount++;
             } else if (p < 0) {
                 score -= pieceValues[-p];
                 if (p == -1) score -= pawnPST[7 - r][c];
@@ -491,16 +496,14 @@ int evaluateBoard() {
                 else if (p == -2) score -= rookPST[7 - r][c];
                 else if (p == -4) score -= bishopPST[7 - r][c];
                 else if (p == -5) score -= queenPST[7 - r][c];
-                if (p == -2 || p == -4 || p == -5) pieceCount++;
             }
         }
     }
-    bool endgame = false;
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < 8; c++) {
             int p = board[r][c];
-            if (p == 6) score += endgame ? kingEndPST[r][c] : kingMidPST[r][c];
-            else if (p == -6) score -= endgame ? kingEndPST[7 - r][c] : kingMidPST[7 - r][c];
+            if (p == 6) score += kingMidPST[r][c];
+            else if (p == -6) score -= kingMidPST[7 - r][c];
         }
     return score;
 }
@@ -551,11 +554,11 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     }
 
     int origAlpha = alpha;
+    int origBeta = beta;
     Move bestMove = moves[0];
 
     if (isMaximizing) {
         int maxEval = -99999;
-        int origBeta = beta;
         for (const auto& move : moves) {
             UndoState st;
             makeMove(move, st);
@@ -583,7 +586,6 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
         return maxEval;
     } else {
         int minEval = 99999;
-        int origBeta = beta;
         for (const auto& move : moves) {
             UndoState st;
             makeMove(move, st);
@@ -606,7 +608,8 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
                 break;
             }
         }
-        int flag = (minEval >= origBeta) ? TT_UPPER : (minEval <= origAlpha) ? TT_LOWER : TT_EXACT;
+        // FIX BUG 2: Đảo TT_UPPER <-> TT_LOWER cho nhánh minimizing
+        int flag = (minEval >= origBeta) ? TT_LOWER : (minEval <= origAlpha) ? TT_UPPER : TT_EXACT;
         ttStore(hash, depth, minEval, flag, bestMove);
         return minEval;
     }
@@ -644,7 +647,7 @@ string toAlgebraic(int r, int c) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v2.0 (FULL PST + TT + KILLER) ===\n";
+    cout << "=== VINU CHESS ZERO v2.0.1 (3 BUGS FIXED) ===\n";
     initZobrist();
     clearTT();
     printBoard();
