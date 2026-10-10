@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <random>
 #include <cstring>
+#include <chrono>
 
 using namespace std;
 
@@ -19,7 +20,7 @@ struct Move {
 
 struct UndoState {
     int savedPiece;
-    int savedEpPiece;    // FIX BUG 1
+    int savedEpPiece;
     int savedEpR, savedEpC;
     bool savedWK, savedWQ, savedWRK, savedWRQ;
     bool savedBK, savedBQ, savedBRK, savedBRQ;
@@ -133,6 +134,11 @@ uint64_t zobristSide;
 uint64_t zobristCastle[4];
 uint64_t zobristEnPassant[64];
 
+static const int MAX_SEARCH_MS = 2500;
+static const int STARTING_DEPTH = 5;
+static bool stopSearch = false;
+static chrono::steady_clock::time_point searchStart;
+
 void initZobrist() {
     mt19937_64 rng(1234567890ULL);
     for (int p = 0; p < 13; p++)
@@ -141,6 +147,12 @@ void initZobrist() {
     zobristSide = rng();
     for (int i = 0; i < 4; i++) zobristCastle[i] = rng();
     for (int sq = 0; sq < 64; sq++) zobristEnPassant[sq] = rng();
+}
+
+bool isTimeUp() {
+    auto now = chrono::steady_clock::now();
+    long long elapsed = chrono::duration_cast<chrono::milliseconds>(now - searchStart).count();
+    return elapsed >= MAX_SEARCH_MS;
 }
 
 uint64_t computeHash(bool isWhiteTurn) {
@@ -387,7 +399,7 @@ void makeMove(const Move& m, UndoState& st) {
     board[m.fromR][m.fromC] = 0;
 
     if (m.isEnPassant) {
-        st.savedEpPiece = board[m.fromR][m.toC];  // FIX BUG 1
+        st.savedEpPiece = board[m.fromR][m.toC];
         board[m.fromR][m.toC] = 0;
     } else if (m.isCastling) {
         if (m.toR == 7 && m.toC == 6) { board[7][5] = board[7][7]; board[7][7] = 0; }
@@ -403,7 +415,6 @@ void makeMove(const Move& m, UndoState& st) {
     if (m.fromR == 0 && m.fromC == 0) blackRookQueenMoved = true;
     if (m.fromR == 0 && m.fromC == 7) blackRookKingMoved = true;
 
-    // FIX BUG 3: Update castling rights khi Xe BỊ ĂN
     if (m.toR == 7 && m.toC == 0) whiteRookQueenMoved = true;
     if (m.toR == 7 && m.toC == 7) whiteRookKingMoved = true;
     if (m.toR == 0 && m.toC == 0) blackRookQueenMoved = true;
@@ -421,7 +432,7 @@ void undoMove(const Move& m, const UndoState& st) {
     if (m.isEnPassant) {
         board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = 0;
-        board[m.fromR][m.toC] = st.savedEpPiece;  // FIX BUG 1
+        board[m.fromR][m.toC] = st.savedEpPiece;
     } else if (m.isCastling) {
         board[m.fromR][m.fromC] = board[m.toR][m.toC];
         board[m.toR][m.toC] = 0;
@@ -499,12 +510,28 @@ int evaluateBoard() {
             }
         }
     }
-    for (int r = 0; r < 8; r++)
+
+    for (int r = 0; r < 8; r++) {
         for (int c = 0; c < 8; c++) {
             int p = board[r][c];
             if (p == 6) score += kingMidPST[r][c];
             else if (p == -6) score -= kingMidPST[7 - r][c];
         }
+    }
+
+    int centerR[] = {3, 3, 4, 4};
+    int centerC[] = {3, 4, 3, 4};
+    for (int i = 0; i < 4; i++) {
+        int r = centerR[i], c = centerC[i];
+        int p = board[r][c];
+        if (p > 0) score += 8;
+        else if (p < 0) score -= 8;
+    }
+
+    int whiteMobility = getLegalMoves(true).size();
+    int blackMobility = getLegalMoves(false).size();
+    score += (whiteMobility - blackMobility) * 2;
+
     return score;
 }
 
@@ -540,6 +567,7 @@ int quiescenceSearch(bool isMaximizing, int alpha, int beta) {
 }
 
 int minimax(int depth, bool isMaximizing, int alpha, int beta) {
+    if (stopSearch || isTimeUp()) return isMaximizing ? alpha : beta;
     if (depth == 0) return quiescenceSearch(isMaximizing, alpha, beta);
 
     uint64_t hash = computeHash(isMaximizing);
@@ -547,10 +575,24 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     Move ttMove{-1,-1,-1,-1};
     if (ttLookup(hash, depth, alpha, beta, ttScore, ttMove)) return ttScore;
 
+    if (depth >= 2 && !isInCheck(isMaximizing)) {
+        int reduction = 2 + (depth / 4);
+        if (reduction >= depth) reduction = depth - 1;
+        int nullScore = minimax(depth - reduction, !isMaximizing, -beta, -alpha);
+        if (isMaximizing && nullScore >= beta) return beta;
+        if (!isMaximizing && nullScore <= alpha) return alpha;
+    }
+
     vector<Move> moves = getLegalMoves(isMaximizing, (ttMove.fromR != -1) ? &ttMove : nullptr, depth);
     if (moves.empty()) {
         if (isInCheck(isMaximizing)) return isMaximizing ? -90000 : 90000;
         return 0;
+    }
+
+    if (depth <= 2) {
+        int staticEval = evaluateBoard();
+        if (isMaximizing && staticEval + 150 <= alpha) return alpha;
+        if (!isMaximizing && staticEval - 150 >= beta) return beta;
     }
 
     int origAlpha = alpha;
@@ -560,6 +602,7 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     if (isMaximizing) {
         int maxEval = -99999;
         for (const auto& move : moves) {
+            if (stopSearch || isTimeUp()) return maxEval;
             UndoState st;
             makeMove(move, st);
             int eval = minimax(depth - 1, false, alpha, beta);
@@ -587,6 +630,7 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
     } else {
         int minEval = 99999;
         for (const auto& move : moves) {
+            if (stopSearch || isTimeUp()) return minEval;
             UndoState st;
             makeMove(move, st);
             int eval = minimax(depth - 1, true, alpha, beta);
@@ -608,7 +652,6 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
                 break;
             }
         }
-        // FIX BUG 2: Đảo TT_UPPER <-> TT_LOWER cho nhánh minimizing
         int flag = (minEval >= origBeta) ? TT_LOWER : (minEval <= origAlpha) ? TT_UPPER : TT_EXACT;
         ttStore(hash, depth, minEval, flag, bestMove);
         return minEval;
@@ -617,12 +660,16 @@ int minimax(int depth, bool isMaximizing, int alpha, int beta) {
 
 Move getBestMoveIterative(bool isWhite, int maxDepth) {
     Move bestMove = {-1, -1, -1, -1};
+    searchStart = chrono::steady_clock::now();
+    stopSearch = false;
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
+        if (stopSearch || isTimeUp()) break;
         vector<Move> moves = getLegalMoves(isWhite, (bestMove.fromR != -1) ? &bestMove : nullptr, currentDepth);
         if (moves.empty()) break;
         Move currentBest = moves[0];
         int bestValue = isWhite ? -99999 : 99999;
         for (const auto& move : moves) {
+            if (stopSearch || isTimeUp()) break;
             UndoState st;
             makeMove(move, st);
             int boardValue = minimax(currentDepth - 1, !isWhite, -99999, 99999);
@@ -635,7 +682,9 @@ Move getBestMoveIterative(bool isWhite, int maxDepth) {
         }
         bestMove = currentBest;
         cout << "  -> Pass Depth " << currentDepth << " hoan thanh! (TT hits: " << ttHits << ", probes: " << ttProbes << ")" << endl;
+        if (isTimeUp()) break;
     }
+    stopSearch = true;
     return bestMove;
 }
 
@@ -647,7 +696,7 @@ string toAlgebraic(int r, int c) {
 }
 
 int main() {
-    cout << "=== VINU CHESS ZERO v2.0.1 (3 BUGS FIXED) ===\n";
+    cout << "=== VINU CHESS ZERO v2.1.0 (SEARCH OPTIMIZED) ===\n";
     initZobrist();
     clearTT();
     printBoard();
@@ -678,9 +727,9 @@ int main() {
         makeMove(selectedMove, st);
         printBoard();
 
-        cout << "\nAI (Den) dang suy nghi (Depth 5 + QSearch + TT + Killer)...\n";
+        cout << "\nAI (Den) dang suy nghi (Depth 5 + null move + futility + time control)...\n";
         int prevHits = ttHits, prevProbes = ttProbes;
-        Move aiMove = getBestMoveIterative(false, 5);
+        Move aiMove = getBestMoveIterative(false, STARTING_DEPTH);
         if (aiMove.fromR == -1) { cout << "AI khong con nuoc di hop le! TRO CHOI KET THUC.\n"; break; }
         cout << "AI chon nuoc di: " << toAlgebraic(aiMove.fromR, aiMove.fromC)
              << " -> " << toAlgebraic(aiMove.toR, aiMove.toC) << "\n";
